@@ -1,0 +1,28 @@
+# Local credentials and user data — never commit these
+.env
+.env.*
+!.env.example
+secrets/
+store/
+opengym-token.json
+mcp-access-token
+openai-runtime-key
+exercise-names.json
+tunnel-client*.yaml
+tunnel-client*.yml
+!tunnel-client.example.yaml
+docker-compose*.yaml
+docker-compose*.yml
+!docker-compose.example.yaml
+compose.yaml
+compose.yml
+
+# Local development
+node_modules/
+coverage/
+*.log
+*.tap
+*.bak
+*.backup
+.DS_Store
+*.zip

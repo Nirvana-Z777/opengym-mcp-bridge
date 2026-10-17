@@ -1,0 +1,40 @@
+name: opengym-mcp-bridge
+services:
+  bridge:
+    image: ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.1
+    restart: unless-stopped
+    environment:
+      OPENGYM_BASE_URL: "${OPENGYM_BASE_URL:?Set OPENGYM_BASE_URL in .env}"
+      OPENGYM_TOKEN_FILE: /secrets/opengym-token.json
+      MCP_SECRET_FILE: /secrets/mcp-access-token
+      CATALOGUE_NAMES_FILE: /store/exercise-names.json
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "3003"
+      OPENGYM_ALLOW_WRITES: "${OPENGYM_ALLOW_WRITES:-0}"
+    expose:
+      - "3003"
+    volumes:
+      - ./secrets:/secrets
+      - ./store:/store
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # Optional OpenAI Secure MCP Tunnel client. Configure the local tunnel-client.yaml
+  # from tunnel-client.example.yaml; never commit tunnel-client.yaml or its secrets.
+  tunnel-client:
+    image: ghcr.io/openai/tunnel-client:v0.0.16
+    restart: unless-stopped
+    environment:
+      TUNNEL_CLIENT_CONFIG: /etc/tunnel-client/config.yaml
+    depends_on:
+      - bridge
+    volumes:
+      - ./tunnel-client.yaml:/etc/tunnel-client/config.yaml:ro
+      - ./secrets/openai-runtime-key:/run/secrets/openai-runtime-key:ro
+      - ./secrets/mcp-access-token:/run/secrets/mcp-access-token:ro

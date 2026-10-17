@@ -1,0 +1,28 @@
+# Only runtime source, package metadata and the license enter the build context.
+# This excludes tests, Git history, credentials, user data and local deployment files.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!LICENSE
+!src/
+!src/**
+
+# Keep local/secret paths excluded even if accidentally placed under src/.
+**/.env
+**/.env.*
+**/secrets/
+**/store/
+**/node_modules/
+**/tests/
+**/*.test.mjs
+**/docker-compose*.yaml
+**/docker-compose*.yml
+**/tunnel-client*.yaml
+**/tunnel-client*.yml
+**/opengym-token.json
+**/mcp-access-token
+**/openai-runtime-key
+**/exercise-names.json
+**/*.zip
+**/*.log

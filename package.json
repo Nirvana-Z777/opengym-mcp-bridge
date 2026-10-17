@@ -1,0 +1,20 @@
+{
+  "name": "opengym-mcp-bridge",
+  "version": "0.3.1",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nirvana-Z777/opengym-mcp-bridge.git"
+  },
+  "type": "module",
+  "description": "Personal self-hosted openGym MCP Bridge with guarded plan and workout-history writes",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "start": "node src/mcp.mjs",
+    "pair": "node src/pair.mjs",
+    "test": "node --test --test-reporter=tap tests/*.test.mjs"
+  }
+}

@@ -1,6 +1,6 @@
 # Backup, release and deployment procedure
 
-This is a development PR. No production NAS/container/Tunnel changes are part of development or CI. The published package version and deployment examples remain **0.3.1** until a separately approved merge/release updates them together. The future release image is `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2`; it has not been published by this PR.
+The v0.3.2 release uses `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2`. Package metadata, README and the repository Compose example are aligned to 0.3.2. Release preparation and CI do not change production NAS/container/Tunnel configuration; existing 0.3.1 deployments require a separately authorized upgrade.
 
 ## Mandatory local backups
 
@@ -21,7 +21,7 @@ Recovery is an intentional data change and requires the owner's approval. Do thi
 3. If whole-state recovery is necessary, prepare a reviewed recovery payload from the latest state and the explicitly approved recovered fields. Retain current sync records/unknown fields, do not use `stamped: true`, and submit only with **the latest read's** `baseRev` and `baseWid`. Take a new restricted atomic backup immediately before submitting. If the latest state changed, stop and rebuild the recovery preview; never force or retry a 409. This release provides no automatic recovery writer.
 4. Submit once, then reread and compare the intended content. On timeout or failed reread, use read-only checks first. Reconcile a disposable Android/web client to check restored data and preserved later records before authorizing production use. Stop if the required merge, timestamps or tombstones cannot be established safely.
 
-## Release gate
+## Release procedure
 
 After the owner approves the PR and formal release:
 
@@ -32,7 +32,7 @@ After the owner approves the PR and formal release:
 
 ## Production upgrade and rollback advice
 
-Production upgrade is a separate authorization after release. Keep the currently pinned 0.3.1 image and working configuration. First test the new image with a separate synthetic account, especially Android/web synchronization, load meaning, custom renames and conflict behavior. This development task did not perform live cross-device acceptance checks.
+Production upgrade is a separate authorization after release. Keep the currently pinned 0.3.1 image and working configuration. First test the new image with a separate synthetic account, especially Android/web synchronization, load meaning, custom renames and conflict behavior. Release preparation did not perform live cross-device acceptance checks.
 
 For an authorized upgrade, privately back up the current Compose configuration and data, note the current image digest, keep writes off, and pull the immutable 0.3.2 image. Refresh only the optional text catalogue if needed, without touching credentials or other store files. Recreate only the Bridge service; leave openGym and Tunnel running. Check health/MCP initialization and read-only queries before allowing a small previewed write.
 

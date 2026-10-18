@@ -7,22 +7,22 @@ A community-maintained, self-hosted MCP bridge for [openGym](https://github.com/
 - Reads the openGym account through its supported web/API interface and a dedicated paired token.
 - Offers MCP tools for status, plan/history reads, official exercise-name search, guarded plan changes, and guarded historical workout logging.
 - Supports confirmed, preview-first writes when `OPENGYM_ALLOW_WRITES=1`.
-- The v0.3.2 development change adds custom exercises, precise history queries, saved-workout edits, notes, phases, unilateral sets and mandatory local pre-write backups.
+- v0.3.2 adds custom exercises, precise history queries, saved-workout edits, notes, phases, unilateral sets and mandatory local pre-write backups.
 - Ships as a Docker image through GitHub Actions and GitHub Container Registry (GHCR).
 
 This project is experimental. Back up your openGym data and inspect every write preview before confirming it.
 
-The current development PR is **not a formal v0.3.2 release**. Package metadata and deployment examples remain pinned to 0.3.1 until release approval. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
+The current release is **v0.3.2**. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
 
 ## Docker image
 
 ```text
-ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.1
+ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2
 ```
 
-The image is built from this repository by `.github/workflows/publish-image.yml`. Pushing to `main` publishes the `main` tag. Pushing a version tag such as `v0.3.1` publishes `0.3.1` and `latest`. GitHub Actions runs `npm test` before publishing.
+The image is built from this repository by `.github/workflows/publish-image.yml`. Pushing to `main` publishes the `main` tag. Pushing a version tag such as `v0.3.2` publishes `0.3.2` and `latest`. GitHub Actions runs `npm test` before publishing.
 
-Images target `linux/amd64`. Pin `0.3.1` for a release deployment; `main` tracks development and `latest` tracks the most recent stable release. The Dockerfile contains runtime source, package metadata and the MIT license; test fixtures and local configuration are excluded from its build context.
+Images target `linux/amd64`. Pin `0.3.2` for a release deployment; `main` tracks development and `latest` tracks the most recent stable release. The Dockerfile contains runtime source, package metadata and the MIT license; test fixtures and local configuration are excluded from its build context.
 
 ## Security first
 
@@ -83,7 +83,7 @@ After making the package public, verify a pull without stored registry credentia
 
 ```bash
 anonymous_config=$(mktemp -d)
-docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.1
+docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2
 docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:latest
 rmdir "$anonymous_config"
 ```

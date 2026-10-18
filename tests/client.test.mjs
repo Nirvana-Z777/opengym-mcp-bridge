@@ -51,3 +51,17 @@ test('Official catalogue text is parsed without eval, names are imported',async(
     assert.equal(names['0002'],'exercise 2');
   } finally {await rm(dir,{recursive:true,force:true});}
 });
+
+test('HTTP and network errors do not expose server bodies or transport error details',async()=>{
+  const client=new OpenGymClient({baseUrl:'https://test.invalid',tokenFile:'/not-read',fetchImpl:async()=>Response.json({error:'synthetic-sensitive-server-body'},{status:403})});
+  await assert.rejects(()=>client.call('GET','/api/data',undefined,false),e=>e.status===403&&!e.message.includes('synthetic-sensitive')&&e.body===null);
+  client.fetchImpl=async()=>{throw new Error('synthetic-sensitive-network-detail');};
+  await assert.rejects(()=>client.call('GET','/api/data',undefined,false),e=>!e.message.includes('synthetic-sensitive'));
+});
+
+test('PUT carries revision and write ID without stamped bypass or unversioned fallback',async()=>{
+  const requests=[];const client=new OpenGymClient({baseUrl:'https://test.invalid',tokenFile:'/not-read',fetchImpl:async(url,init)=>{requests.push({url,init});return Response.json({ok:true});}});
+  client.loadToken=async()=>'fixture-only-put-token';await client.putData({state:{_rev:4,_wid:'synthetic-4'},baseRev:4,baseWid:'synthetic-4'});
+  const payload=JSON.parse(requests[0].init.body);assert.equal(payload.baseRev,4);assert.equal(payload.baseWid,'synthetic-4');assert.equal(Object.hasOwn(payload,'stamped'),false);assert.equal(requests.length,1);
+  await assert.rejects(()=>client.putData({state:{}}));assert.equal(requests.length,1);
+});

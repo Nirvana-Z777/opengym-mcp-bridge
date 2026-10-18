@@ -48,13 +48,13 @@ export class OpenGymClient {
         method, headers, signal: AbortSignal.timeout(15000),
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-    } catch (error) {
-      throw new Error(`连接 openGym 失败（${endpoint}）：${error.message}`);
+    } catch {
+      throw new Error(`连接 openGym 失败（${endpoint}）；请只读核查状态，不要重复写入`);
     }
     let data;
     try { data = await response.json(); }
     catch { throw new GymHttpError(`openGym 返回了非 JSON 响应（${endpoint}）：HTTP ${response.status}`, response.status, null); }
-    if (!response.ok) throw new GymHttpError(data?.error || `HTTP ${response.status}`, response.status, data);
+    if (!response.ok) throw new GymHttpError(`openGym 请求失败：HTTP ${response.status}`, response.status, null);
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw new GymHttpError('openGym 返回的 JSON 格式无效', response.status, data);
     return data;
   }

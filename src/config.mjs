@@ -12,10 +12,15 @@ export function configFromEnv() {
   }
   const port = Number(env('MCP_PORT', '3003'));
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('MCP_PORT 无效');
+  const catalogueFile = path.resolve(env('CATALOGUE_NAMES_FILE', path.join(process.cwd(), 'store', 'exercise-names.json')));
+  const backupKeep = Number(env('OPENGYM_BACKUP_KEEP', '20'));
+  if (!Number.isInteger(backupKeep) || backupKeep < 1 || backupKeep > 100) throw new Error('OPENGYM_BACKUP_KEEP 必须为 1-100');
   return {
     baseUrl: base,
     tokenFile: path.resolve(env('OPENGYM_TOKEN_FILE', path.join(process.cwd(), 'secrets', 'opengym-token.json'))),
-    catalogueFile: path.resolve(env('CATALOGUE_NAMES_FILE', path.join(process.cwd(), 'store', 'exercise-names.json'))),
+    catalogueFile,
+    backupDirectory: path.resolve(env('OPENGYM_BACKUP_DIR', path.join(path.dirname(catalogueFile), 'backups'))),
+    backupKeep,
     mcpSecretFile: path.resolve(env('MCP_SECRET_FILE', path.join(process.cwd(), 'secrets', 'mcp-access-token'))),
     transport: env('MCP_TRANSPORT', 'stdio'),
     host: env('MCP_HOST', '127.0.0.1'),

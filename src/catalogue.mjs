@@ -40,10 +40,14 @@ export function extractCatalogueArray(text){
 }
 
 export async function loadCatalogue(file){
+  return (await loadExerciseCatalogue(file)).names;
+}
+export async function loadExerciseCatalogue(file){
   try{
     const obj=JSON.parse(await fs.readFile(file,'utf8'));
-    return obj?.names && typeof obj.names==='object'?obj.names:{};
-  }catch{return {};}
+    return {names:obj?.names && typeof obj.names==='object'&&!Array.isArray(obj.names)?obj.names:{},
+      exercises:obj?.exercises && typeof obj.exercises==='object'&&!Array.isArray(obj.exercises)?obj.exercises:{}};
+  }catch{return {names:{},exercises:{}};}
 }
 
 export async function importCatalogue(file,{fetchImpl=globalThis.fetch}={}){
@@ -54,6 +58,9 @@ export async function importCatalogue(file,{fetchImpl=globalThis.fetch}={}){
   };
   const data=extractCatalogueArray(await read('frontend/src/lib/exercises-data.js'));
   const names=Object.fromEntries(data.map(row=>[row.id,row.n]).filter(([id,name])=>id && typeof name==='string'));
+  const exercises=Object.fromEntries(data.filter(e=>typeof e.id==='string'&&typeof e.n==='string').map(e=>[e.id,
+    Object.fromEntries(Object.entries(e).filter(([k,v])=>['id','n','bp','eq','tg','assisted'].includes(k)
+      ? ['string','boolean'].includes(typeof v) : ['sm','primaries','secondaries','muscleGroups'].includes(k)&&Array.isArray(v)&&v.every(x=>typeof x==='string')))]));
   let translated=0;
   try{
     const cn=JSON.parse(await read('catalogue/i18n/zh.json'));
@@ -64,7 +71,7 @@ export async function importCatalogue(file,{fetchImpl=globalThis.fetch}={}){
     }
   }catch(e){ console.error('[catalogue] 获取中文名称失败，使用官方英文名称：'+e.message); }
   await fs.mkdir(path.dirname(file),{recursive:true});
-  await writeCredential(file,{source:`openGym ${RELEASE} (text only)`,count:Object.keys(names).length,translated,names});
+  await writeCredential(file,{format:2,source:`openGym ${RELEASE} (text only)`,count:Object.keys(names).length,translated,names,exercises});
   return {count:Object.keys(names).length,translated};
 }
 

@@ -1,0 +1,37 @@
+# openGym compatibility and evidence boundary
+
+The v0.3.2 development change targets official openGym **v1.4.1**, the latest release checked on 2026-10-18. The deployment owner confirmed using the latest openGym; no production account, NAS, credentials, tunnel or training export was accessed to verify that statement.
+
+Reviewed release commit: [`464355ef43d4c8f8a4e0bb6db9c2af7f240593b5`](https://github.com/DuarteSantos8/openGym/tree/464355ef43d4c8f8a4e0bb6db9c2af7f240593b5). The checked upstream main commit was `e348fc17c42c7e9a211c5972e573ad3698190ee2`; the relevant downloaded reference files were identical to the release files. This is a pinned interface review, not a promise about future versions.
+
+Upstream references were read outside this repository. This MIT implementation was written independently; no AGPL implementation, tests or exercise dataset is bundled. The optional runtime catalogue importer retrieves text-only official data at the deployment owner's request and retains its source/version locally; upstream data remains subject to its own terms.
+
+| Bridge concern | Reviewed official contract |
+|---|---|
+| Custom metadata | [`sheets.jsx`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/sheets.jsx), [`exercises.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/exercises.js): customEx ID, n/bp/eq/desc, tg/sm, primaries/secondaries/muscleGroups, custom flag. |
+| Workout/set semantics | [`workout-model.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/workout-model.js), [`history.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/history.js): entries/sets, w/r/sec, phase, legacy warmup, independent sides, RIR/RPE, topW, volume. |
+| Weight meanings | [`dumbbells.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/dumbbells.js): entry.target.dbLoad snapshots as/each/total; old unstamped history stays as recorded. |
+| Saved edits / derived data | [`session-edit.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/session-edit.js), [`finish-workout.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/finish-workout.js): edit same stable workout ID, recompute volume/best loads, maintain existing PR badges and kept working weights. |
+| Date/time | [`workout-date.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/workout-date.js): local calendar dates, ordering and legacy identity require a separate migration path. |
+| Server / device sync | [`api/server.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/api/server.js), [`api/sync-stamps.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/api/sync-stamps.js), [`sync-merge.js`](https://github.com/DuarteSantos8/openGym/blob/v1.4.1/frontend/src/lib/sync-merge.js): compare-and-swap revision/write ID, server stamps for API edits, unknown-field preservation and device reconciliation. |
+
+## Writes and cross-device sync
+
+The Bridge clones a fresh complete state and retains unknown fields and existing `_ts`, `_f`, `_u`, deleted/edited/undone metadata. It submits `{state, baseRev, baseWid}`; it **never** sends `stamped: true` or invents client timestamps. The official server stamps changed routine/custom/workout fields and settings using its clock. A changed revision/write ID is rejected before backup; a later race is rejected by the server's 409. Neither path retries or merges an unapproved state.
+
+After acceptance, verification compares domain content while allowing server bookkeeping/timestamps and device-local `active` removal. A mismatch remains `verification_pending`; it is not reported as verified. Android/web clients rely on the official server stamps when they next reconcile. The source contract and mocked transport tests were supplemented by seven local synthetic scenarios executed against the pinned upstream server stamp module outside the MIT checkout. They cover plan/custom/note/effort edits, same-ID warmup replacement, different-ID replacement and unilateral import. No upstream implementation is included in this repository. No live Android, web account or production NAS synchronization was performed. Use a separate disposable account for a cross-device acceptance check before upgrading production.
+
+Workout edits preserve identity and update work volume and each occurrence's best load. Warmups are excluded. Per-side volume sums only completed limbs; rest-pause reps are already cumulative, while drops add their own products. Assistance machines use the least positive assistance as the better load. PRs are recomputed for affected exercise IDs in chronological history: only the edited session may gain a badge; existing later badges may be invalidated, while imported/backfilled sessions do not acquire fabricated PR badges. A held working weight is lowered only if it matches the edited former best and that best was removed/worsened; unrelated held choices remain unchanged. Backfills are inserted chronologically with empty PR badges and can invalidate later badges.
+
+## Explicit limits
+
+- No date, start-time or duration edits. Use the original app for date migration, timezone ordering and legacy identity handling.
+- Idless legacy workouts remain queryable but are not editable. Save them in the original app to establish a stable ID first.
+- Superset structural changes are rejected. Notes and otherwise supported set edits can still be previewed.
+- Dropset/rest-pause internals are projected for reading and counted for volume, but internal value edits are rejected. A whole complex row may be removed while another set remains; its phase may be edited. No silent flattening.
+- Mixed as/each/total history for an affected exercise is rejected when PR/held-weight recalculation is needed. No conversion or reinterpretation of old numeric weights. Same-day sessions lacking actual start times are rejected if chronological PR recalculation would be ambiguous.
+- Adding unilateral rows to an existing bilateral `each` occurrence is rejected because changing its side flag would reinterpret old volume. Add a separate occurrence instead.
+- A full text metadata catalogue is needed for creation/renaming duplicate checks and saved-set PR recalculation. Names-only catalogues remain compatible with original read/basic-log tools where no derived record history needs classification.
+- Unsupported modes/phases, inconsistent timed rows carrying reps, nonnumeric legacy loads and oversized results fail explicitly. No whole-workout deletion, custom deletion, media uploads or automatic restore tool.
+
+These limits are deliberate failures before submission, not partially applied edits. See [tool examples](tools.md) and [backup/release procedure](operations.md).

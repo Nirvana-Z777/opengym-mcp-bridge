@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { normalizeWorkoutInput, workoutSignature, workoutPreview, verifyLoggedWorkout } from './workout-log.mjs';
-
-export class PlanError extends Error {
-  constructor(message, code = 'validation') {
-    super(message);
-    this.name = 'PlanError';
-    this.code = code;
-  }
-}
-
+import { PlanError } from './errors.mjs';
+export { PlanError } from './errors.mjs';
+import { normalizeWorkoutInput, workoutSignature, workoutPreview } from './workout-log.mjs';
+import { GuardedWrites } from './write-safety.mjs';
+import { listCustom, changeCustomExercises } from './custom-exercises.mjs';
+import { listWorkouts, getWorkout, exerciseHistory } from './workout-query.mjs';
+import { editWorkout } from './workout-edit.mjs';
+import { insertHistory, updateHistoryStatistics } from './workout-stats.mjs';
+import { publicSet } from './workout-data.mjs';
 const clone = v => structuredClone(v);
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
 const nameOf = r => String(r?.name || r?.id || '未知训练');
@@ -65,7 +64,7 @@ export function publicRecent(state, limit = 10, names={}) {
         exercises: (Array.isArray(w.entries)?w.entries:[]).slice(0,40).map(e=>({
           exercise_id: e.id, exercise_name:exerciseName(state,names,e.id),
           sets: (Array.isArray(e.sets)?e.sets:[]).slice(0,30).map(s=>({
-            reps:s.r ?? null, weight:s.w ?? null, done:!!s.done,
+            ...publicSet(s), reps:s.r ?? null, weight:s.w ?? null, done:!!s.done,
             ...(Number.isFinite(s.rir)?{rir:s.rir}:{}),
             ...(Number.isFinite(s.rpe)?{rpe:s.rpe}:{})
           }))
@@ -191,145 +190,59 @@ export function applyActions(inputState, actions, names={}) {
 }
 
 export class PersonalGymBridge {
-  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({})}){
-    this.client=client;
-    this.loadNames=loadNames;
-    this.writes=writes;
-    this.now=now;
-    this.ttl=ttl;
-    this.drafts=new Map();
-    this.workoutDrafts=new Map();
-    this.writing=false;
+  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({}), loadCatalogue, backup}){
+    this.client=client; this.loadNames=loadNames; this.loadCatalogue=loadCatalogue; this.writes=writes;
+    this.writer=new GuardedWrites({client,writes,backup,now,ttl});
   }
+  async catalogue(){return this.loadCatalogue ? await this.loadCatalogue() : {names:await this.loadNames(),exercises:{}};}
   async getStatus(){
-    const auth=await this.client.refreshLogin();
-    const snap=await this.client.getData();
-    return {connected:true,profile:auth.user?.name||'已连接',rev:snap.rev,has_state:!!snap.state,writes_enabled:this.writes};
+    const auth=await this.client.refreshLogin(); const snap=await this.client.getData();
+    return {connected:true,profile:typeof auth.user?.name==='string'?auth.user.name:'已连接',rev:snap.rev,has_state:!!snap.state,writes_enabled:this.writes};
   }
-  async getPlan(){ const snap=await this.client.getData(); return {...publicPlan(snap.state,await this.loadNames()),server_revision:snap.rev}; }
+  async getPlan(){const snap=await this.client.getData();return {...publicPlan(snap.state,(await this.catalogue()).names),server_revision:snap.rev};}
   async searchExercises({query,limit=15}={}){
-    if(typeof query!=='string'||!query.trim()||query.length>100) throw new PlanError('query 必须是 1-100 字的动作名称或 ID');
+    if(typeof query!=='string'||!query.trim()||query.length>100)throw new PlanError('query 必须是 1-100 字的动作名称或 ID');
     boundedInt(limit,1,30,'limit');
-    const names=await this.loadNames();
-    if(!Object.keys(names).length) throw new PlanError('动作目录尚未加载；请在 Bridge 容器终端运行 node src/catalogue.mjs');
+    const names={...(await this.catalogue()).names}; const snap=await this.client.getData();
+    for(const e of snap.state?.customEx||[])if(typeof e.id==='string'&&typeof e.n==='string')names[e.id]=e.n;
+    if(!Object.keys(names).length)throw new PlanError('动作目录尚未加载；请运行 node src/catalogue.mjs');
     const q=query.trim().toLocaleLowerCase();
     const results=Object.entries(names).filter(([id,name])=>id.toLowerCase()===q||String(name).toLocaleLowerCase().includes(q)).slice(0,limit).map(([exercise_id,exercise_name])=>({exercise_id,exercise_name}));
     return {query:query.trim(),count:results.length,results};
   }
-  async getSummary(){const snap=await this.client.getData(); return {...publicSummary(snap.state),server_revision:snap.rev};}
-  async getRecent({limit=10}={}){const snap=await this.client.getData(); return publicRecent(snap.state,limit,await this.loadNames());}
+  async getSummary(){const snap=await this.client.getData();return {...publicSummary(snap.state),server_revision:snap.rev};}
+  async getRecent({limit=10}={}){const snap=await this.client.getData();return publicRecent(snap.state,limit,(await this.catalogue()).names);}
   async preview({actions}){
-    const snap=await this.client.getData();
-    const planned=applyActions(snap.state,actions,await this.loadNames());
-    const changes=planned.changes;
-    this.cleanDrafts();
-    const id=randomUUID();
-    const expiresAt=this.now()+this.ttl;
-    this.drafts.set(id,{rev:snap.rev,wid:snap.state._wid||null,actions:clone(planned.normalizedActions),expiresAt});
-    return {
-      proposal_id:id,source_revision:snap.rev,expires_at:new Date(expiresAt).toISOString(),
-      changes,write_ready:this.writes,
-      warning:'这只是预览，没有修改 openGym。写入前必须获得用户明确确认。',
-    };
+    const snap=await this.client.getData();const planned=applyActions(snap.state,actions,(await this.catalogue()).names);
+    return this.writer.prepare('plan',snap,planned.state,{changes:planned.changes},{changes:planned.changes});
   }
-  cleanDrafts(){
-    for(const [id,entry] of this.drafts) if(entry.expiresAt<this.now()) this.drafts.delete(id);
-    for(const [id,entry] of this.workoutDrafts) if(entry.expiresAt<this.now()) this.workoutDrafts.delete(id);
-    while(this.drafts.size>50) this.drafts.delete(this.drafts.keys().next().value);
-    while(this.workoutDrafts.size>50) this.workoutDrafts.delete(this.workoutDrafts.keys().next().value);
-  }
-  async previewWorkoutLog({workouts}={}){
-    const snap=await this.client.getData();
-    if(!obj(snap.state)) throw new PlanError('openGym 训练状态不存在；请先在 App 中保存并同步一次');
-    if(!Array.isArray(workouts)||workouts.length<1||workouts.length>10) throw new PlanError('workouts 必须包含 1-10 次训练；建议按日期分批导入');
-    const names=await this.loadNames();
-    const normalized=workouts.map(w=>normalizeWorkoutInput(w,{state:snap.state,names}));
-    const existing=new Set((Array.isArray(snap.state.workouts)?snap.state.workouts:[]).map(workoutSignature));
+  async apply(input){return this.writer.commit('plan',input);}
+  async previewWorkoutLog({workouts}){
+    if(!Array.isArray(workouts)||workouts.length<1||workouts.length>10)throw new PlanError('workouts 必须包含 1-10 次训练');
+    const snap=await this.client.getData();const catalogue=await this.catalogue();
+    const records=workouts.map(w=>normalizeWorkoutInput(w,{state:snap.state,catalogue,names:catalogue.names}));
+    const signatures=new Set((snap.state.workouts||[]).map(workoutSignature));
     const batch=new Set();
-    for(const w of normalized){
-      const sig=workoutSignature(w);
-      if(existing.has(sig)) throw new PlanError(`发现疑似重复历史记录：${w.d}「${w.name}」。没有生成预览；请先检查 openGym 历史记录`,'duplicate');
-      if(batch.has(sig)) throw new PlanError(`本次批量导入中存在重复记录：${w.d}「${w.name}」。没有生成预览`,'duplicate');
-      batch.add(sig);
-    }
-    this.cleanDrafts();
-    const id=randomUUID(),expiresAt=this.now()+this.ttl;
-    this.workoutDrafts.set(id,{rev:snap.rev,wid:snap.state._wid||null,workouts:structuredClone(normalized),signatures:normalized.map(workoutSignature),expiresAt});
-    const records=normalized.map(w=>workoutPreview(w,snap.state,names));
-    return {proposal_id:id,source_revision:snap.rev,expires_at:new Date(expiresAt).toISOString(),workout_count:records.length,total_exercises:records.reduce((n,w)=>n+w.exercise_count,0),total_sets:records.reduce((n,w)=>n+w.set_count,0),records,write_ready:this.writes,warning:'这是训练历史写入预览，没有修改 openGym。确认前请逐条核对日期、动作、重量和次数。写入需要明确回复「我确认写入」。'};
+    for(const w of records){const key=workoutSignature(w);if(signatures.has(key))throw new PlanError('疑似重复：相同的训练历史已存在，整批未写入','duplicate');if(batch.has(key))throw new PlanError('批量导入中存在重复训练，整批未写入','duplicate');batch.add(key);}
+    const next=clone(snap.state);next.workouts=insertHistory(next.workouts||[],records);
+    const statistics=updateHistoryStatistics(next,{affectedIds:records.flatMap(w=>w.entries.map(e=>e.id)),catalogue});
+    const previews=records.map(w=>workoutPreview(w,next,catalogue.names,catalogue));
+    return this.writer.prepare('workout_log',snap,next,{workout_count:records.length,total_exercises:records.reduce((n,w)=>n+w.entries.length,0),total_sets:records.reduce((n,w)=>n+w.entries.reduce((s,e)=>s+e.sets.length,0),0),records:previews,statistics_changes:statistics},
+      {logged_count:records.length,records:records.map(w=>({workout_id:w.id,date:w.d,name:w.name}))});
   }
-  async logWorkout({proposal_id,confirmation}){
-    if(!this.writes) throw new PlanError('服务器未启用 OPENGYM_ALLOW_WRITES=1；此版本当前只能预览','write-disabled');
-    if(confirmation!=='我确认写入') throw new PlanError('需要用户明确确认后，confirmation 才能填写「我确认写入」','approval-required');
-    if(this.writing) throw new PlanError('另一笔写入正在执行，请稍后重试','busy');
-    if(typeof proposal_id!=='string') throw new PlanError('缺少 proposal_id');
-    const proposal=this.workoutDrafts.get(proposal_id);
-    if(!proposal||proposal.expiresAt<this.now()) throw new PlanError('历史记录预览不存在或已过期，请重新预览','expired');
-    this.writing=true;
-    try{
-      const current=await this.client.getData();
-      if(current.rev!==proposal.rev||(current.state?._wid||null)!==proposal.wid){
-        this.workoutDrafts.delete(proposal_id);
-        throw new PlanError('检测到手机、网页或其他工具已更新训练数据；拒绝覆盖，请重新读取和预览','conflict');
-      }
-      const state=structuredClone(current.state);
-      state.workouts=Array.isArray(state.workouts)?state.workouts:[];
-      const existing=new Set(state.workouts.map(workoutSignature));
-      for(let i=0;i<proposal.workouts.length;i++){
-        if(existing.has(proposal.signatures[i])) throw new PlanError('写入前发现相同的训练历史已存在；为避免重复，整批未写入','duplicate');
-        existing.add(proposal.signatures[i]);
-      }
-      state.workouts.push(...structuredClone(proposal.workouts));
-      const response=await this.client.putData({state,baseRev:current.rev,baseWid:proposal.wid});
-      this.workoutDrafts.delete(proposal_id);
-      const after=await this.client.getData();
-      const logged=proposal.workouts.map(expected=>(after.state?.workouts||[]).find(w=>w?.id===expected.id));
-      const verified=logged.length===proposal.workouts.length&&logged.every((actual,i)=>verifyLoggedWorkout(actual,proposal.workouts[i]));
-      return {applied:!!response.ok,verified,revision:after.rev,logged_count:proposal.workouts.length,records:proposal.workouts.map((w,i)=>({date:w.d,name:w.name,workout_id:w.id,verified:verifyLoggedWorkout(logged[i],w)})),...(verified?{}:{warning:'服务器接受了保存，但重新读取未看到全部期望值；不要重复导入，请先核对 App 历史记录。'})};
-    }catch(error){
-      if(error?.status===409){this.workoutDrafts.delete(proposal_id);throw new PlanError('openGym 返回 409：手机或网页刚刚写入了新版本，整批历史记录未自动重试','conflict');}
-      throw error;
-    }finally{this.writing=false;}
+  async logWorkout(input){return this.writer.commit('workout_log',input);}
+  async listCustomExercises(input={}){const snap=await this.client.getData();return listCustom(snap.state,input);}
+  async previewCustomExerciseChange({actions}){
+    const snap=await this.client.getData();const change=changeCustomExercises(snap.state,actions,await this.catalogue());
+    return this.writer.prepare('custom_exercise',snap,change.state,change.details,change.result);
   }
-  async apply({proposal_id,confirmation}){
-    if(!this.writes) throw new PlanError('服务器未启用 OPENGYM_ALLOW_WRITES=1；此版本当前只能预览','write-disabled');
-    if(confirmation!=='我确认写入') throw new PlanError('需要用户明确确认后，confirmation 才能填写「我确认写入」','approval-required');
-    if(this.writing) throw new PlanError('另一笔写入正在执行，请稍后重试','busy');
-    if(typeof proposal_id !== 'string') throw new PlanError('缺少 proposal_id');
-    const proposal=this.drafts.get(proposal_id);
-    if(!proposal || proposal.expiresAt<this.now()) throw new PlanError('预览不存在或已经超过十分钟，请重新预览','expired');
-    this.writing=true;
-    try {
-      const current=await this.client.getData();
-      if(current.rev!==proposal.rev || (current.state?._wid||null)!==proposal.wid){
-        this.drafts.delete(proposal_id);
-        throw new PlanError('检测到其他设备已经更新了训练数据；拒绝覆盖，请重新读取和预览','conflict');
-      }
-      const {state,changes}=applyActions(current.state,proposal.actions,await this.loadNames());
-      const response=await this.client.putData({state,baseRev:current.rev,baseWid:proposal.wid});
-      this.drafts.delete(proposal_id);
-      const after=await this.client.getData();
-      const verified=changes.every(change=>{
-        if(change.type==='create_routine') {
-          const routine=(after.state.routines||[]).find(r=>r.id===change.routine_id);
-          return !!routine && routine.name===change.name && routine.ex?.length===change.exercises.length && change.exercises.every((ex,i)=>routine.ex[i]?.id===ex.exercise_id && routine.ex[i]?.sets===ex.sets && routine.ex[i]?.reps===ex.reps && routine.ex[i]?.weight===ex.weight);
-        }
-        if(change.type==='assign_weekday') return (after.state.week?.[change.weekday]||null)===change.to;
-        if(change.type==='override_date') return (after.state.dayPlan?.[change.date]||null)===change.to;
-        if(change.type==='set_exercise_target') {
-          const routine=(after.state.routines||[]).find(r=>r.id===change.routine_id);
-          const ex=routine?.ex?.[change.exercise_index];
-          return ex?.id===change.exercise_id && Object.entries(change.to).every(([key,val])=>ex?.[key]===val);
-        }
-        return false;
-      });
-      return {
-        applied:!!response.ok,verified,revision:after.rev,changes,
-        ...(verified?{}:{warning:'服务器接受了保存，但重新读取未看到全部期望值：不要重复写入，请先核对 App 显示。'})
-      };
-    } catch(error){
-      if(error?.status===409){ this.drafts.delete(proposal_id); throw new PlanError('openGym 返回 409：手机或网页刚刚写入了新版本，已拒绝覆盖','conflict'); }
-      throw error;
-    } finally {this.writing=false;}
+  async applyCustomExerciseChange(input){return this.writer.commit('custom_exercise',input);}
+  async listWorkouts(input={}){const snap=await this.client.getData();return listWorkouts(snap.state,input);}
+  async getWorkout(input){const snap=await this.client.getData();return getWorkout(snap.state,input,await this.catalogue());}
+  async getExerciseHistory(input){const snap=await this.client.getData();return exerciseHistory(snap.state,input,await this.catalogue());}
+  async previewWorkoutEdit(input){
+    const snap=await this.client.getData();const change=editWorkout(snap.state,input,await this.catalogue());
+    return this.writer.prepare('workout_edit',snap,change.state,change.details,change.result);
   }
+  async applyWorkoutEdit(input){return this.writer.commit('workout_edit',input);}
 }

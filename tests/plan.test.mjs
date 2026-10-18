@@ -87,7 +87,7 @@ test('Reject invalid or unknown exercises when creating routines',()=>{
 test('Bridge preview retains generated routine ID and write verifies created routine',async()=>{
   const client=new FakeClient();
   const names={'0025':'杠铃卧推'};
-  const bridge=new PersonalGymBridge({client,writes:true,loadNames:async()=>names});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client,writes:true,loadNames:async()=>names});
   const proposal=await bridge.preview({actions:[{type:'create_routine',name:'新推日',exercises:[{exercise_id:'0025',sets:3,reps:3}],weekdays:[1]}]});
   const createdChange=proposal.changes.find(x=>x.type==='create_routine');
   assert.ok(createdChange.routine_id);
@@ -107,7 +107,7 @@ test('Reject unknown routines, invalid days, unknown action props',()=>{
 
 test('Preview is read-only, write is gated',async()=>{
   const client=new FakeClient();
-  const bridge=new PersonalGymBridge({client,writes:false});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client,writes:false});
   const proposal=await bridge.preview({actions:[{type:'override_date',date:'2000-01-06',routine_id:'r-A'}]});
   assert.equal(proposal.changes.length,1);
   assert.equal(client.rev,4);
@@ -117,7 +117,7 @@ test('Preview is read-only, write is gated',async()=>{
 
 test('Approved write uses baseRev and baseWid, re-reads verification',async()=>{
   const client=new FakeClient();
-  const bridge=new PersonalGymBridge({client,writes:true});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client,writes:true});
   const proposal=await bridge.preview({actions:[{type:'set_exercise_target',routine_id:'r-A',exercise_index:0,sets:2}]});
   await assert.rejects(()=>bridge.apply({proposal_id:proposal.proposal_id,confirmation:'approve'}),/确认/);
   const result=await bridge.apply({proposal_id:proposal.proposal_id,confirmation:'我确认写入'});
@@ -131,7 +131,7 @@ test('Approved write uses baseRev and baseWid, re-reads verification',async()=>{
 
 test('Reject outdated snapshot without touching server',async()=>{
   const client=new FakeClient();
-  const bridge=new PersonalGymBridge({client,writes:true});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client,writes:true});
   const proposal=await bridge.preview({actions:[{type:'assign_weekday',weekday:5,routine_id:'r-A'}]});
   client.rev=5;client.data._wid='new-write-id';
   await assert.rejects(()=>bridge.apply({proposal_id:proposal.proposal_id,confirmation:'我确认写入'}),/拒绝覆盖/);
@@ -139,7 +139,7 @@ test('Reject outdated snapshot without touching server',async()=>{
 });
 
 test('MCP initialize and tool calls return valid JSON-RPC',async()=>{
-  const bridge=new PersonalGymBridge({client:new FakeClient(),writes:false});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client:new FakeClient(),writes:false});
   const hello=await dispatch({jsonrpc:'2.0',id:0,method:'initialize',params:{protocolVersion:'2025-06-18'}},bridge);
   assert.equal(hello.result.protocolVersion,'2025-06-18');
   const tools=await dispatch({jsonrpc:'2.0',id:1,method:'tools/list'},bridge);
@@ -152,7 +152,7 @@ test('MCP initialize and tool calls return valid JSON-RPC',async()=>{
 });
 
 test('HTTP transport requires bearer token and speaks JSON-RPC',async()=>{
-  const bridge=new PersonalGymBridge({client:new FakeClient(),writes:false});
+  const bridge=new PersonalGymBridge({backup:{create:async()=>({id:'synthetic-backup'})},client:new FakeClient(),writes:false});
   const server=createHttpServer(bridge,'a'.repeat(64));
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const url=`http://127.0.0.1:${server.address().port}`;
@@ -161,9 +161,9 @@ test('HTTP transport requires bearer token and speaks JSON-RPC',async()=>{
     assert.equal(unauth.status,401);
     const success=await fetch(url+'/mcp',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+'a'.repeat(64),Accept:'application/json,text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:3,method:'tools/list'})});
     assert.equal(success.status,200);
-    assert.equal((await success.json()).result.tools.length,9);
+    assert.equal((await success.json()).result.tools.length,15);
     const customHeader=await fetch(url+'/mcp',{method:'POST',headers:{'Content-Type':'application/json','X-Bridge-Token':'a'.repeat(64),Accept:'application/json,text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:4,method:'tools/list'})});
     assert.equal(customHeader.status,200);
-    assert.equal((await customHeader.json()).result.tools.length,9);
+    assert.equal((await customHeader.json()).result.tools.length,15);
   } finally { await new Promise(resolve=>server.close(resolve)); }
 });

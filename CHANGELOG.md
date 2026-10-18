@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.2 — unreleased development PR
+## v0.3.2 — 2026-10-19
 
 - Add custom-exercise listing, duplicate-aware create/update previews and guarded commits with stable IDs.
 - Add date-filtered cursor history, full supported workout detail and per-exercise history preserving repeated occurrences.
@@ -11,7 +11,7 @@
 - Add mocked safety/model tests and a read-only PR Docker context/build/runtime smoke job. Keep all original 24 tests; adapt only backup injection, tool counts and chronological lookup.
 - Document the pinned openGym v1.4.1 contract, unsupported migrations/structures, manual recovery and separately authorized release/production procedures.
 
-Version metadata and production image examples stay at 0.3.1 until formal release approval. No NAS deployment or GHCR release is performed by this PR.
+Release metadata and image examples are updated to 0.3.2. The release workflow publishes `0.3.2` and `latest` for linux/amd64 after tests and isolated runtime checks pass. Production upgrades remain separately authorized; existing 0.3.1 deployments are unchanged.
 
 ## v0.3.1
 

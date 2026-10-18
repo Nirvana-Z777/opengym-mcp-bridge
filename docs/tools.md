@@ -88,11 +88,15 @@ Updates preserve original ID, date/time, unchanged notes, media, opaque fields a
 
 An ordinary set contains `reps` or `seconds`, never both. Optional `weight` defaults to 0, `done` defaults to true. `phase` is `warmup` or `work`; missing phase preserves legacy work-set behavior. Use either RIR (0–10) or RPE (6–10), not both. Weights must be finite 0–1000; reps 1–1000; seconds 1–86400. Each occurrence has 1–30 sets; each workout 1–30 occurrences. Session/occurrence notes are each at most 500 Unicode characters. Optional actual start must include a timezone and match the supplied local date; duration requires an actual start. Unknown dates/durations are never fabricated.
 
+Each saved occurrence must have at least one completed set, or one completed limb of a unilateral set. An entirely unchecked occurrence is rejected during log/add/replace and final edit previews even if another occurrence is complete. Unchecked rows alongside completed rows are retained. Rejection issues no proposal and triggers neither backup nor PUT.
+
 ```json
 {"workouts":[{"date":"2000-01-02","name":"Synthetic training","note":"虚构整次训练备注","exercises":[{"exercise_id":"VALID_DUMBBELL_ID","weight_basis":"per_dumbbell","note":"虚构动作备注","sets":[{"weight":2,"reps":5,"phase":"warmup"},{"weight":3,"reps":4,"phase":"work","rir":2}]}]}]}
 ```
 
 `weight_basis` maps `as_recorded` → native `as` (default, count once), `per_dumbbell` → `each` (two bells count twice unless single-arm), `pair_total` → `total` (count once). Explicit bell meanings require dumbbell/kettlebell metadata. Stored numeric weights are never converted. Record a personal load convention in an optional note; the public project assumes no bar, plate or accessory convention.
+
+With `per_dumbbell`, ordinary bilateral rows and explicit unilateral rows cannot be mixed inside one occurrence: the native side flag/multiplier applies to the entire occurrence. Use two independent occurrences of the same exercise, one for each layout. Previews reject mixed input regardless of row order, warmup status or completion; they never guess which rows should count twice. `as_recorded` and `pair_total` retain their count-once semantics.
 
 Unilateral reps require both actual limbs, with no guessed multiplication:
 

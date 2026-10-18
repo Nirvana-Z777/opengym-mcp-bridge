@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { PlanError } from './errors.mjs';
 import { only, text, integer, boundedOutput, object } from './validate.mjs';
 import { findWorkout, publicWorkout } from './workout-query.mjs';
-import { normalizeEntry, normalizeSet, patchSet, hasSides } from './workout-data.mjs';
+import { normalizeEntry, normalizeSet, patchSet, hasSides, assertCompletedEntry, assertUnambiguousWeightLayout } from './workout-data.mjs';
 import { refreshWorkout, updateHistoryStatistics } from './workout-stats.mjs';
 
 const KEYS = {
@@ -70,7 +70,6 @@ export function editWorkout(original, input, catalogue) {
         const index = action.index === undefined ? entry.sets.length : integer(action.index, 0, entry.sets.length, 'index');
         const row = normalizeSet(action.set);
         entry.sets.splice(index, 0, row);
-        if ((hasSides(row) || row.side) && !entry.target?.side && entry.target?.dbLoad === 'each') throw new PlanError('不能改变既有双侧哑铃动作的容量口径；请新增独立单侧动作项', 'unsupported');
         if (hasSides(row) || row.side) entry.target = { ...entry.target, side: true };
         metricsChanged = true; break;
       }
@@ -86,7 +85,10 @@ export function editWorkout(original, input, catalogue) {
       ...(action.set_index === undefined ? {} : { set_index: action.set_index }) });
   }
   if (workout.entries.length > 30) throw new PlanError('每次训练最多 30 个动作');
-  if (!workout.entries.some(e => e.sets.some(s => s.done || (hasSides(s) && (s.sides.L.done || s.sides.R.done))))) throw new PlanError('修改后没有已完成训练组；本版不清空训练');
+  for (const entry of workout.entries) {
+    assertCompletedEntry(entry);
+    assertUnambiguousWeightLayout(entry);
+  }
   let statistics = [];
   // Do not canonicalize unchanged or note-only records: that would invent an edit
   // to fields the user never asked to touch, particularly legacy target/weight data.

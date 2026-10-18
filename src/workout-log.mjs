@@ -24,9 +24,6 @@ export function normalizeWorkoutInput(input, { state, names = {}, catalogue = { 
   if (!Array.isArray(input.exercises) || input.exercises.length < 1 || input.exercises.length > 30) throw new PlanError('exercises 必须包含 1-30 个动作');
   const workout = { id: randomUUID(), d: input.date, name: text(input.name, 60, 'name'),
     entries: input.exercises.map(entry => normalizeEntry(entry, { state, catalogue })), prs: [] };
-  if (!workout.entries.some(e => e.sets.some(s => s.done || (hasSides(s) && (s.sides.L.done || s.sides.R.done))))) {
-    throw new PlanError('历史训练至少需要一组实际完成的数据');
-  }
   if (input.note !== undefined) workout.note = text(input.note, 500, 'note', { empty: true });
   if (input.body_weight !== undefined) workout.bw = number(input.body_weight, 0, 500, 'body_weight');
   if (input.routine_id !== undefined) {

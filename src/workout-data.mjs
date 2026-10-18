@@ -7,6 +7,19 @@ import { only, text, number, integer, boolean, isObject } from './validate.mjs';
 export const WEIGHT_BASES = { as_recorded: 'as', per_dumbbell: 'each', pair_total: 'total' };
 export const phaseOf = row => row?.phase ? row.phase : row?.warmup === true ? 'warmup' : 'work';
 export const hasSides = row => isObject(row?.sides) && isObject(row.sides.L) && isObject(row.sides.R);
+export const hasCompletedSet = row => hasSides(row)
+  ? row.sides.L.done === true || row.sides.R.done === true : row?.done === true;
+export function assertCompletedEntry(entry) {
+  if (!(entry.sets || []).some(hasCompletedSet)) throw new PlanError('每个保存动作至少需要一个已完成组；单侧组任一侧完成即可');
+}
+export function assertUnambiguousWeightLayout(entry) {
+  if (entry.target?.dbLoad !== 'each') return;
+  const unilateral = row => hasSides(row) || row.side === 'L' || row.side === 'R';
+  const rows = entry.sets || [];
+  // Native volume applies one multiplier to the entire occurrence, not per row.
+  // Do not infer a single/bilateral meaning from only some of its rows.
+  if (rows.some(unilateral) && rows.some(row => !unilateral(row))) throw new PlanError('同一动作项采用 per_dumbbell 时不能混合普通双手组和单侧组；请分为独立动作项', 'unsupported');
+}
 export const workoutKey = workout => workout.id ?? `legacy:${workout.d}|${workout.start ?? ''}`;
 export const basisOf = entry => Object.entries(WEIGHT_BASES).find(([, native]) => native === entry?.target?.dbLoad)?.[0] || 'as_recorded';
 export function exerciseMetadata(state, catalogue, id) {
@@ -132,6 +145,8 @@ export function normalizeEntry(input, { state, catalogue }) {
     target.dbLoad = WEIGHT_BASES[input.weight_basis];
   }
   if (Object.keys(target).length) entry.target = target;
+  assertCompletedEntry(entry);
+  assertUnambiguousWeightLayout(entry);
   entry.topW = bestLoad(entry, state, catalogue) || null;
   return entry;
 }
@@ -158,9 +173,12 @@ function loadFactor(entry, state, catalogue) {
   return one ? 1 : 2;
 }
 export function workoutVolume(workout, state = {}, catalogue = {}) {
-  for (const e of workout.entries || []) for (const s of e.sets || []) {
-    if (!['warmup','work'].includes(phaseOf(s)) || !['reps','time','cardio'].includes(modeOf(s,e))) throw new PlanError('Unsupported stored set mode/phase', 'unsupported');
-    if (modeOf(s,e)!=='reps' && Number(s.r)>0) throw new PlanError('计时/有氧旧组还包含次数，无法安全重算容量，请在原 App 核对', 'unsupported');
+  for (const e of workout.entries || []) {
+    assertUnambiguousWeightLayout(e);
+    for (const s of e.sets || []) {
+      if (!['warmup','work'].includes(phaseOf(s)) || !['reps','time','cardio'].includes(modeOf(s,e))) throw new PlanError('Unsupported stored set mode/phase', 'unsupported');
+      if (modeOf(s,e)!=='reps' && Number(s.r)>0) throw new PlanError('计时/有氧旧组还包含次数，无法安全重算容量，请在原 App 核对', 'unsupported');
+    }
   }
   return (workout.entries || []).reduce((sum, entry) => sum + loadFactor(entry, state, catalogue) * (entry.sets || []).reduce((v, row) =>
     v + (phaseOf(row) === 'warmup' || modeOf(row, entry) !== 'reps' ? 0 : rowVolume(row)), 0), 0);

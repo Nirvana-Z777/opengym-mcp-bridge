@@ -2,7 +2,7 @@
 
 Scope: the fresh development checkout, its Git history, synthetic tests and CI configuration. Production NAS, credentials, persistent user data and Tunnel configuration are outside scope and were not accessed.
 
-- Baseline: the original 24 tests passed before implementation. Final local suite: **86 tests passed, 0 failed, 0 skipped** (Node.js 24.19.0). All original test names remain; adaptations inject a fake backup, account for added tools and locate chronological records by date rather than append position.
+- Baseline: the original 24 tests passed before implementation. Final local suite after the preview-validation follow-up: **96 tests passed, 0 failed, 0 skipped** (Node.js 24.19.0). All original test names remain; adaptations inject a fake backup, account for added tools and locate chronological records by date rather than append position. Ten added regression tests cover per-bell layout ambiguity and per-occurrence completion, including zero backups/PUTs/proposals on rejection and preservation of valid partial completion.
 - Seven additional local synthetic scenarios passed against the pinned official server sync-stamp module, kept outside the public checkout. This checks server mutation compatibility, not live device synchronization.
 - Gitleaks 8.30.1 found no secrets in the working source tree or fetched Git history. Manual review checked fixture provenance, domains/IP literals, configuration examples, ignored paths and the proposed publication file list. These checks are evidence for this change, not a guarantee about arbitrary future commits.
 - `git diff --check` and actionlint 1.7.12 passed. No new npm dependencies were introduced. Existing SHA-pinned Actions and GITHUB_TOKEN publication remain in place.

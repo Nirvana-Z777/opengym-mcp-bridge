@@ -53,14 +53,12 @@ jobs:
           console.log(`Executed ${count[1]} tests`);
           JS
 
-  publish:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+  build:
     needs: test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
-      packages: write
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,6 +88,41 @@ jobs:
           assert actual == expected, f'Unexpected Docker context files: {actual ^ expected}'
           print(f'Verified {len(actual)} runtime context files; local-data canaries excluded')
           PY
+      - name: Build runtime without publishing
+        run: docker build --platform linux/amd64 --tag opengym-bridge:ci .
+      - name: Smoke test isolated runtime image
+        run: |
+          docker run --rm --network none --entrypoint node opengym-bridge:ci --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { existsSync, readFileSync, readdirSync } from "node:fs";
+            import { dispatch } from "./src/mcp.mjs";
+            const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+            const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
+            assert.equal(reply.result.serverInfo.version, version);
+            for (const file of [".env", ".git", "tests", "docker-compose.yaml", "tunnel-client.yaml"]) {
+              assert.equal(existsSync(file), false, `Unexpected runtime file: ${file}`);
+            }
+            assert.deepEqual(readdirSync("/secrets"), []);
+            assert.deepEqual(readdirSync("/store"), []);
+            console.log(`Verified runtime image; MCP version: ${version}; no bundled credentials or user data`);
+          '
+
+
+  publish:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:

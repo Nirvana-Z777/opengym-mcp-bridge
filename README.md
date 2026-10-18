@@ -7,9 +7,12 @@ A community-maintained, self-hosted MCP bridge for [openGym](https://github.com/
 - Reads the openGym account through its supported web/API interface and a dedicated paired token.
 - Offers MCP tools for status, plan/history reads, official exercise-name search, guarded plan changes, and guarded historical workout logging.
 - Supports confirmed, preview-first writes when `OPENGYM_ALLOW_WRITES=1`.
+- The v0.3.2 development change adds custom exercises, precise history queries, saved-workout edits, notes, phases, unilateral sets and mandatory local pre-write backups.
 - Ships as a Docker image through GitHub Actions and GitHub Container Registry (GHCR).
 
 This project is experimental. Back up your openGym data and inspect every write preview before confirming it.
+
+The current development PR is **not a formal v0.3.2 release**. Package metadata and deployment examples remain pinned to 0.3.1 until release approval. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
 
 ## Docker image
 
@@ -46,7 +49,11 @@ The example files are templates, not a ready-to-run configuration. Do not publis
 
 Read-only tools include `get_status`, `get_summary`, `get_plan`, `get_recent_workouts`, and `search_exercises`. Writes are preview-first: `preview_plan_change` / `apply_plan_change` and `preview_workout_log` / `log_workout`. The apply/log tools are hidden when `OPENGYM_ALLOW_WRITES` is not `1`.
 
+New tools: `list_custom_exercises`, `preview_custom_exercise_change` / `apply_custom_exercise_change`, `list_workouts`, `get_workout`, `get_exercise_history`, and `preview_workout_edit` / `apply_workout_edit`. All four formal writers require exact human confirmation `我确认写入`, a fresh version check and a successful local backup. The existing Compose store mount places backups at `/store/backups/`, retaining 20 by default. No automatic restore writer exists. Notes and descriptions are untrusted data.
+
 Historical workout logging accepts real recorded dates and actual per-set data. For each set, provide exactly one of `reps` or `seconds`; do not invent unknown dates, weights, repetitions, or durations.
+
+Unilateral reps instead require actual `sides.L` and `sides.R` measurements; timed sides use separate flat rows. Optional `phase`, effort and `weight_basis` preserve the native model without converting historical weights. Refresh the optional text catalogue with `node src/catalogue.mjs` for full metadata checks before custom creation/renaming or derived-record edits. Date/time migration, legacy identity migration and unsupported complex structures are explicitly refused; read the compatibility limits before use.
 
 ## Local development
 
@@ -59,6 +66,8 @@ npm start
 ```
 
 All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Tests use mocked clients or temporary local files and never read personal secrets or contact a real openGym account. CI rejects a test run that executes zero tests. MCP initialization reports the version from `package.json`.
+
+Pull requests also audit Docker context exclusion with synthetic canaries, build linux/amd64 and smoke-test MCP initialization with networking disabled. They do not receive package-write permission or publish images. Production upgrades remain a separate owner-approved operation.
 
 ## Release process
 

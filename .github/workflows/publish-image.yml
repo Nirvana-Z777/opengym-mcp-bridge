@@ -42,14 +42,16 @@ jobs:
           }
           console.log(`Package version: ${version}`);
           JS
-      - name: Run tests and require a nonempty suite
+      - name: Run complete regression suite
+        shell: bash
         run: |
+          set -o pipefail
           npm test | tee test-results.tap
           node --input-type=module <<'JS'
           import { readFileSync } from 'node:fs';
           const output = readFileSync('test-results.tap', 'utf8');
           const count = output.match(/^# tests (\d+)$/m);
-          if (!count || Number(count[1]) < 1) throw new Error('No tests executed');
+          if (!count || Number(count[1]) < 96) throw new Error('Original regression suite must remain present');
           console.log(`Executed ${count[1]} tests`);
           JS
 

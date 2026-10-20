@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.0 — development, unreleased (skip v0.3.3)
+
+- Edit existing routine names, exercises/order and training targets through guarded plan previews.
+- Persist account-scoped workout drafts, measured sets, corrections and cancellation; finish through one human-approved backed-up CAS commit.
+- Journal pending submissions durably before PUT and recover by exact read-only verification across restarts.
+- Add recorded exercise progression, weekly volume/muscle credits and explicitly private bodyweight/feedback capture.
+- Enforce published MCP input schemas, account isolation, private atomic files, conflict/timeout tests and full legacy regression.
+- Keep 0.3.2 release metadata/images unchanged; no production changes or publication. See docs/v0.4.0.md.
+
+
 ## v0.3.2 — 2026-10-19
 
 - Add custom-exercise listing, duplicate-aware create/update previews and guarded commits with stable IDs.

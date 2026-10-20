@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { FEATURE_TOOLS,FEATURE_WRITE_TOOLS,validateSchema } from './v040.mjs';
+import { boundedOutput } from './validate.mjs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import { createInterface } from 'node:readline';
@@ -48,12 +50,12 @@ const TOOLS = [
   },
   {
     name:'preview_plan_change',
-    description:'Dry-run ONLY. Validate proposed edits to the openGym plan and return an exact change list plus a short-lived proposal_id. This does not write anything. Allowed types: create_routine, assign_weekday, override_date and set_exercise_target. Before create_routine, use search_exercises to get valid exercise IDs. A new routine may include weekdays (0=Sunday through 6=Saturday) to assign it in the same proposal.',
+    description:'Dry-run ONLY. Validate proposed edits to the openGym plan and return an exact change list plus a short-lived proposal_id. This does not write anything. Edit existing routines with rename_routine, add/remove/replace/move_routine_exercise and set_exercise_target; also create_routine, assign_weekday and override_date. Sequential indices refer to earlier edits in this proposal. Before create_routine, use search_exercises to get valid exercise IDs. A new routine may include weekdays (0=Sunday through 6=Saturday) to assign it in the same proposal.',
     inputSchema:{
       type:'object',additionalProperties:false,required:['actions'],properties:{
         actions:{type:'array',minItems:1,maxItems:20,items:{
           type:'object',required:['type'],properties:{
-            type:{type:'string',enum:['create_routine','assign_weekday','override_date','set_exercise_target']},
+            type:{type:'string',enum:['create_routine','assign_weekday','override_date','set_exercise_target','rename_routine','add_routine_exercise','remove_routine_exercise','replace_routine_exercise','move_routine_exercise']},
             name:{type:'string',minLength:1,maxLength:60,description:'Required for create_routine'},
             emoji:{type:'string',maxLength:32,description:'Optional short icon key or emoji for create_routine'},
             exercises:{type:'array',minItems:1,maxItems:12,description:'Required for create_routine. Use exercise_id values returned by search_exercises.',items:{type:'object',required:['exercise_id','sets','reps'],properties:{exercise_id:{type:'string',maxLength:64},sets:{type:'integer',minimum:1,maximum:12},reps:{type:'integer',minimum:1,maximum:100},weight:{type:'number',minimum:0,maximum:1000}},additionalProperties:false}},
@@ -62,6 +64,8 @@ const TOOLS = [
             date:{type:'string',description:'YYYY-MM-DD'},
             routine_id:{type:['string','null'],description:'Existing routine id; null removes assignment, "rest" for override_date only'},
             exercise_index:{type:'integer',minimum:0,description:'Zero-based index within the routine'},
+            index:{type:'integer',minimum:0},to_index:{type:'integer',minimum:0},
+            exercise:{type:'object',required:['exercise_id','sets','reps'],additionalProperties:false,properties:{exercise_id:{type:'string',minLength:1,maxLength:64},sets:{type:'integer',minimum:1,maximum:12},reps:{type:'integer',minimum:1,maximum:100},weight:{type:'number',minimum:0,maximum:1000}}},
             sets:{type:'integer',minimum:1,maximum:12},
             reps:{type:'integer',minimum:1,maximum:100},
             weight:{type:'number',minimum:0,maximum:1000}
@@ -90,9 +94,11 @@ const TOOLS = [
   }
 ];
 
-TOOLS.push(...EXTRA_TOOLS);
+TOOLS.push(...EXTRA_TOOLS,...FEATURE_TOOLS);
+for(const name of FEATURE_WRITE_TOOLS)WRITE_TOOLS.add(name);
 
 const map = (bridge) => ({
+  ...Object.fromEntries(FEATURE_TOOLS.map(t=>[t.name,args=>bridge.features.call(t.name,args)])),
   search: ({query}) => {
     if(typeof query !== 'string' || !query.trim() || query.length>200) throw new Error('query 必须是 1-200 字的文字');
     const q=query.toLowerCase();
@@ -148,7 +154,8 @@ export async function dispatch(message,bridge){
       if(!def) throw Object.assign(new Error('Unknown/disabled tool: '+name),{rpcCode:-32602});
       const fn=map(bridge)[name];
       try{
-        const value=await fn(args);
+        validateSchema(def.inputSchema,args);
+        const value=boundedOutput(await fn(args));
         result={content:[{type:'text',text:JSON.stringify(value)}],structuredContent:value,isError:false};
       }catch(e){
         const msg=(e?.message||String(e)).slice(0,800);
@@ -206,7 +213,7 @@ export function createHttpServer(bridge,accessToken){
 export async function main(){
   const cfg=configFromEnv();
   const client=new OpenGymClient(cfg);
-  const bridge=new PersonalGymBridge({client,writes:cfg.writes,ttl:cfg.proposalTtlMs,loadCatalogue:()=>loadExerciseCatalogue(cfg.catalogueFile),backup:new FileBackupStore({directory:cfg.backupDirectory,keep:cfg.backupKeep})});
+  const bridge=new PersonalGymBridge({client,writes:cfg.writes,ttl:cfg.proposalTtlMs,loadCatalogue:()=>loadExerciseCatalogue(cfg.catalogueFile),localDirectory:path.join(path.dirname(cfg.catalogueFile),'local'),backup:new FileBackupStore({directory:cfg.backupDirectory,keep:cfg.backupKeep})});
   if(cfg.transport==='stdio'){
     const rl=createInterface({input:process.stdin,crlfDelay:Infinity});
     for await(const line of rl){

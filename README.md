@@ -14,6 +14,10 @@ This project is experimental. Back up your openGym data and inspect every write 
 
 The current release is **v0.3.2**. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
 
+## v0.4.0 development branch
+
+This branch integrates existing-plan editing, persistent account-private workout drafts, confirmed single-session completion, progress/weekly muscle-volume analysis and private bodyweight/feedback records. See [v0.4.0 tools, safety, storage and review notes](docs/v0.4.0.md). It skips v0.3.3. Published package/image pins remain 0.3.2 until a separately approved release.
+
 ## Docker image
 
 ```text

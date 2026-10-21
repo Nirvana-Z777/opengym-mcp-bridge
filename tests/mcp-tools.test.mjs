@@ -6,7 +6,7 @@ import { configFromEnv } from '../src/config.mjs';
 import { setup } from './fixtures.mjs';
 test('All 11 original tools and 8 new tools have schemas; every formal writer is gated',async()=>{
   const old=['search','fetch','get_status','get_summary','get_plan','get_recent_workouts','search_exercises','preview_plan_change','apply_plan_change','preview_workout_log','log_workout'];
-  const all=listTools(true);assert.equal(all.length,36);assert.equal(new Set(all.map(t=>t.name)).size,36);assert.equal(listTools(false).length,22);
+  const all=listTools(true);assert.equal(all.length,37);assert.equal(new Set(all.map(t=>t.name)).size,37);assert.equal(listTools(false).length,22);
   for(const name of old)assert.ok(all.some(t=>t.name===name));
   for(const name of ['apply_plan_change','log_workout','apply_custom_exercise_change','apply_workout_edit'])assert.ok(!listTools(false).some(t=>t.name===name));
   for(const t of all){assert.equal(t.inputSchema.type,'object');assert.equal(t.inputSchema.additionalProperties,false);assert.doesNotThrow(()=>JSON.stringify(t));}

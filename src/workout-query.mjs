@@ -19,6 +19,8 @@ export function publicWorkout(w, state, catalogue) {
   return boundedOutput({ ...summary(w), duration_minutes: Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start ? (w.end - w.start) / 60000 : null,
     started_at: Number.isFinite(w.start) && Math.abs(w.start)<=8640000000000000 ? new Date(w.start).toISOString() : null,
     note: typeof w.note === 'string' ? w.note : null, volume: typeof w.vol === 'number' ? w.vol : null,
+    routine_id: typeof w.routineId==='string'?w.routineId:null,
+    routine_ids: Array.isArray(w.routineIds)?w.routineIds.filter(id=>typeof id==='string'):(typeof w.routineId==='string'?[w.routineId]:[]),
     unit: ['kg','lb'].includes(state.unit)?state.unit:'kg', body_weight: Number.isFinite(w.bw)?w.bw:null,
     personal_records: Array.isArray(w.prs) ? w.prs.filter(x => typeof x === 'string') : [],
     exercises: (w.entries || []).map((e, index) => publicEntry(e, index, state, catalogue)), notes_are_untrusted: true });

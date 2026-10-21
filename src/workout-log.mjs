@@ -46,6 +46,8 @@ export function normalizeWorkoutInput(input, { state, names = {}, catalogue = { 
 }
 export function workoutPreview(workout, state, names = {}, catalogue = { names }) {
   return { workout_id: workout.id, date: workout.d, name: workout.name,
+    ...(workout.routineId===undefined?{}:{routine_id:workout.routineId,routine_ids:[...workout.routineIds],
+      routine_name:(state.routines||[]).find(r=>r.id===workout.routineId)?.name??null}),
     ...(workout.start === undefined ? {} : { started_at: new Date(workout.start).toISOString() }),
     ...(workout.end === undefined ? {} : { duration_minutes: (workout.end - workout.start) / 60000 }),
     ...(workout.bw === undefined ? {} : { body_weight: workout.bw, unit: state.unit || 'kg' }),

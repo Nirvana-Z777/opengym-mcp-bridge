@@ -161,9 +161,9 @@ test('HTTP transport requires bearer token and speaks JSON-RPC',async()=>{
     assert.equal(unauth.status,401);
     const success=await fetch(url+'/mcp',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+'a'.repeat(64),Accept:'application/json,text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:3,method:'tools/list'})});
     assert.equal(success.status,200);
-    assert.equal((await success.json()).result.tools.length,15);
+    assert.equal((await success.json()).result.tools.length,22);
     const customHeader=await fetch(url+'/mcp',{method:'POST',headers:{'Content-Type':'application/json','X-Bridge-Token':'a'.repeat(64),Accept:'application/json,text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:4,method:'tools/list'})});
     assert.equal(customHeader.status,200);
-    assert.equal((await customHeader.json()).result.tools.length,15);
+    assert.equal((await customHeader.json()).result.tools.length,22);
   } finally { await new Promise(resolve=>server.close(resolve)); }
 });

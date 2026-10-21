@@ -42,19 +42,52 @@ jobs:
           }
           console.log(`Package version: ${version}`);
           JS
-      - name: Run tests and require a nonempty suite
+      - name: Run complete regression suite
+        shell: bash
         run: |
+          set -o pipefail
           npm test | tee test-results.tap
           node --input-type=module <<'JS'
           import { readFileSync } from 'node:fs';
           const output = readFileSync('test-results.tap', 'utf8');
           const count = output.match(/^# tests (\d+)$/m);
-          if (!count || Number(count[1]) < 1) throw new Error('No tests executed');
+          if (!count || Number(count[1]) < 96) throw new Error('Original regression suite must remain present');
           console.log(`Executed ${count[1]} tests`);
           JS
 
-  build:
+  official-compatibility:
     needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out Bridge
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check out pinned official openGym separately
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: DuarteSantos8/openGym
+          ref: 464355ef43d4c8f8a4e0bb6db9c2af7f240593b5 # v1.4.1
+          path: upstream-compatibility
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install pinned official API dependencies without optional AI runtime
+        working-directory: upstream-compatibility/api
+        run: npm ci --omit=optional --ignore-scripts
+      - name: Install pinned official frontend dependencies
+        working-directory: upstream-compatibility/frontend
+        run: npm ci --ignore-scripts
+      - name: Run isolated official API and frontend sync acceptance
+        run: node scripts/acceptance-official.mjs upstream-compatibility
+
+  build:
+    needs: [test, official-compatibility]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -167,3 +200,50 @@ jobs:
             assert.deepEqual(readdirSync("/store"), []);
             console.log(`Verified runtime image; MCP version: ${version}; no bundled credentials or user data`);
           '
+      - name: Verify anonymous release pulls, architecture, version and matching digests
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          IMAGE_REPOSITORY: ghcr.io/nirvana-z777/opengym-mcp-bridge
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf "$anonymous_config"' EXIT
+          release_version=${RELEASE_TAG#v}
+          for image_tag in "$release_version" latest; do
+            image_ref="$IMAGE_REPOSITORY:$image_tag"
+            docker --config "$anonymous_config" pull --platform linux/amd64 "$image_ref"
+            docker --config "$anonymous_config" image inspect "$image_ref" > "$anonymous_config/image.json"
+            EXPECTED_VERSION="$release_version" node --input-type=module - "$anonymous_config/image.json" <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const [image] = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          assert.equal(image.Os, 'linux');
+          assert.equal(image.Architecture, 'amd64');
+          assert.ok(image.RepoDigests.includes(`${process.env.IMAGE_REPOSITORY}@${process.env.IMAGE_DIGEST}`));
+          assert.equal(image.Config.Labels['org.opencontainers.image.version'], process.env.EXPECTED_VERSION);
+          console.log(`Anonymous pull verified: linux/amd64; version=${process.env.EXPECTED_VERSION}; digest=${process.env.IMAGE_DIGEST}`);
+          JS
+            docker --config "$anonymous_config" run --rm --network none --entrypoint node \
+              -e EXPECTED_VERSION="$release_version" "$image_ref" --input-type=module -e '
+              import assert from "node:assert/strict";
+              import { readFileSync } from "node:fs";
+              import { dispatch } from "./src/mcp.mjs";
+              const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+              assert.equal(version, process.env.EXPECTED_VERSION);
+              const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
+              assert.equal(reply.result.serverInfo.version, process.env.EXPECTED_VERSION);
+              console.log(`Release runtime verified: ${version}`);
+            '
+          done
+          {
+            echo '### Verified release image'
+            echo
+            echo "- Version: $release_version"
+            echo '- Platform: linux/amd64'
+            echo "- Digest: $IMAGE_DIGEST"
+            echo "- Anonymous pulls: $release_version and latest passed; both resolve to the publication digest"
+            echo "- Immutable image: $IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"

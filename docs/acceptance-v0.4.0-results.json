@@ -1,0 +1,100 @@
+{
+  "upstream": {
+    "version": "1.4.1",
+    "commit": "464355ef43d4c8f8a4e0bb6db9c2af7f240593b5"
+  },
+  "bridge_commit": "11e36fc693bda8ac66d69ee5c161eb06a23e1c63",
+  "node": "v24.19.0",
+  "checks": [
+    {
+      "name": "isolated account registration and official one-time pairing",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "A/B/C creation: preview, explicit confirmation, one PUT, backup and reread",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "existing plan rename, add, reorder, replace, target edit and remove exercise",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "real concurrent official write invalidates preview without PUT or retry",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "mandatory backup filesystem failure refuses the write before network submission",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "real official HTTP 409 after final preflight is consumed once without retry",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "linked draft A: persistence, actual sets, approval, single commit and duplicate refusal",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "linked draft B: persistence, actual sets, approval, single commit and duplicate refusal",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "linked draft C: persistence, actual sets, approval, single commit and duplicate refusal",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "draft correction invalidates an older finish preview; cancellation stays local",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "real server accepted write with dropped response: restart, read-only recovery, no second PUT",
+      "passed": true,
+      "bridge_puts": 1
+    },
+    {
+      "name": "official history helpers and native deletion/Undo merge agree with bridge statistics",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "official routine delete and Undo keep existing linked workouts and reject missing plan",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "body weight and feedback persist locally without an official API write",
+      "passed": true,
+      "bridge_puts": 0
+    },
+    {
+      "name": "official frontend store synchronizes real API data and preserves Bridge history through delete/Undo",
+      "passed": true,
+      "bridge_puts": 0
+    }
+  ],
+  "frontend": {
+    "environment": "happy-dom, real api/useStore/sync modules and HTTP",
+    "passed": 1,
+    "browser_ui_verified": false
+  },
+  "passed": true,
+  "finished_at": "2026-10-21T03:59:18.247Z",
+  "request_summary": {
+    "bridge_requests": 171,
+    "bridge_puts": 7,
+    "statuses": {
+      "200": 170,
+      "409": 1
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import { ROUTINE_EDIT_TYPES,applyRoutineEditAction } from './routine-editor.mjs';
+import { FeatureService } from './v040.mjs';
 import { randomUUID } from 'node:crypto';
 import { PlanError } from './errors.mjs';
 export { PlanError } from './errors.mjs';
@@ -101,6 +103,7 @@ export function applyActions(inputState, actions, names={}) {
   const normalizedActions=[];
   for(const action of actions){
     if(!obj(action) || typeof action.type !=='string') throw new PlanError('每条 action 必须包含 type');
+    if(ROUTINE_EDIT_TYPES.has(action.type)){changes.push(...applyRoutineEditAction(state,action,names));normalizedActions.push(clone(action));continue;}
     if(action.type==='create_routine'){
       hasOnly(action,['type','id','name','emoji','exercises','weekdays']);
       const name=typeof action.name==='string'?action.name.trim():'';
@@ -190,8 +193,9 @@ export function applyActions(inputState, actions, names={}) {
 }
 
 export class PersonalGymBridge {
-  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({}), loadCatalogue, backup}){
+  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({}), loadCatalogue, backup, localDirectory}){
     this.client=client; this.loadNames=loadNames; this.loadCatalogue=loadCatalogue; this.writes=writes;
+    this.features=new FeatureService(this,localDirectory);
     this.writer=new GuardedWrites({client,writes,backup,now,ttl});
   }
   async catalogue(){return this.loadCatalogue ? await this.loadCatalogue() : {names:await this.loadNames(),exercises:{}};}
@@ -230,7 +234,7 @@ export class PersonalGymBridge {
     return this.writer.prepare('workout_log',snap,next,{workout_count:records.length,total_exercises:records.reduce((n,w)=>n+w.entries.length,0),total_sets:records.reduce((n,w)=>n+w.entries.reduce((s,e)=>s+e.sets.length,0),0),records:previews,statistics_changes:statistics},
       {logged_count:records.length,records:records.map(w=>({workout_id:w.id,date:w.d,name:w.name}))});
   }
-  async logWorkout(input){return this.writer.commit('workout_log',input);}
+  async logWorkout(input,options={}){return this.writer.commit(options.kind||'workout_log',input,options);}
   async listCustomExercises(input={}){const snap=await this.client.getData();return listCustom(snap.state,input);}
   async previewCustomExerciseChange({actions}){
     const snap=await this.client.getData();const change=changeCustomExercises(snap.state,actions,await this.catalogue());

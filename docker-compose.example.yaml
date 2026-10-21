@@ -1,7 +1,7 @@
 name: opengym-mcp-bridge
 services:
   bridge:
-    image: ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2
+    image: ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0
     restart: unless-stopped
     environment:
       OPENGYM_BASE_URL: "${OPENGYM_BASE_URL:?Set OPENGYM_BASE_URL in .env}"

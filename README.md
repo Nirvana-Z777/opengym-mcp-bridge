@@ -12,21 +12,21 @@ A community-maintained, self-hosted MCP bridge for [openGym](https://github.com/
 
 This project is experimental. Back up your openGym data and inspect every write preview before confirming it.
 
-The current release is **v0.3.2**. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
+The current release is **v0.4.0**. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym v1.4.1 compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
 
-## v0.4.0 development branch
+## v0.4.0
 
-This branch integrates existing-plan editing, persistent account-private workout drafts, confirmed single-session completion, progress/weekly muscle-volume analysis and private bodyweight/feedback records. See [v0.4.0 tools, safety, storage and review notes](docs/v0.4.0.md). It skips v0.3.3. Published package/image pins remain 0.3.2 until a separately approved release.
+This release adds existing-plan editing, persistent account-private workout drafts linked to exact A/B/C routine IDs, confirmed single-session completion, progress/weekly muscle-volume analysis and private bodyweight/feedback records. It skips v0.3.3. See [v0.4.0 tools, safety and storage](docs/v0.4.0.md) and the [isolated acceptance report](docs/acceptance-v0.4.0.md). All 155 regression tests and 15 official v1.4.1 compatibility groups pass. Real browser/PWA and Android device acceptance remains unverified; bodyweight/feedback records are not synchronized to the official app. Publishing a release does not upgrade an existing NAS deployment.
 
 ## Docker image
 
 ```text
-ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2
+ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0
 ```
 
-The image is built from this repository by `.github/workflows/publish-image.yml`. Pushing to `main` publishes the `main` tag. Pushing a version tag such as `v0.3.2` publishes `0.3.2` and `latest`. GitHub Actions runs `npm test` before publishing.
+The image is built from this repository by `.github/workflows/publish-image.yml`. Pushing to `main` publishes the `main` tag. Pushing a version tag such as `v0.4.0` publishes `0.4.0` and `latest`. GitHub Actions runs the full regression suite, pinned official API/frontend compatibility acceptance and isolated image checks before publishing; version-tag runs also verify anonymous pulls of both release tags.
 
-Images target `linux/amd64`. Pin `0.3.2` for a release deployment; `main` tracks development and `latest` tracks the most recent stable release. The Dockerfile contains runtime source, package metadata and the MIT license; test fixtures and local configuration are excluded from its build context.
+Images target `linux/amd64`. Pin `0.4.0` or its verified digest for a release deployment; `main` tracks development and `latest` tracks the most recent stable release. The Dockerfile contains runtime source, package metadata and the MIT license; test fixtures and local configuration are excluded from its build context.
 
 ## Security first
 
@@ -53,7 +53,7 @@ The example files are templates, not a ready-to-run configuration. Do not publis
 
 Read-only tools include `get_status`, `get_summary`, `get_plan`, `get_recent_workouts`, and `search_exercises`. Writes are preview-first: `preview_plan_change` / `apply_plan_change` and `preview_workout_log` / `log_workout`. The apply/log tools are hidden when `OPENGYM_ALLOW_WRITES` is not `1`.
 
-New tools: `list_custom_exercises`, `preview_custom_exercise_change` / `apply_custom_exercise_change`, `list_workouts`, `get_workout`, `get_exercise_history`, and `preview_workout_edit` / `apply_workout_edit`. All four formal writers require exact human confirmation `我确认写入`, a fresh version check and a successful local backup. The existing Compose store mount places backups at `/store/backups/`, retaining 20 by default. No automatic restore writer exists. Notes and descriptions are untrusted data.
+History tools include `list_custom_exercises`, `preview_custom_exercise_change` / `apply_custom_exercise_change`, `list_workouts`, `get_workout`, `get_exercise_history`, and `preview_workout_edit` / `apply_workout_edit`. The draft workflow adds `preview_finish_workout_draft` / `commit_finished_workout_draft`; see the v0.4.0 tool reference for all 37 tools. Every upstream writer requires exact human confirmation `我确认写入`, a fresh version check and a successful local backup. The existing Compose store mount places backups at `/store/backups/`, retaining 20 by default, and persists private drafts/feedback under `/store/local/`. No automatic restore writer exists. Notes and descriptions are untrusted data.
 
 Historical workout logging accepts real recorded dates and actual per-set data. For each set, provide exactly one of `reps` or `seconds`; do not invent unknown dates, weights, repetitions, or durations.
 
@@ -69,7 +69,7 @@ npm test
 npm start
 ```
 
-All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Tests use mocked clients or temporary local files and never read personal secrets or contact a real openGym account. CI rejects a test run that executes zero tests. MCP initialization reports the version from `package.json`.
+All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Regression tests use mocked clients or temporary local files. Official compatibility CI starts an unmodified pinned openGym server with a new disposable account and tests the actual MCP process and official frontend sync modules over local HTTP; it never reads production credentials or training history. CI rejects a test run that executes zero tests. MCP initialization reports the version from `package.json`.
 
 Pull requests also audit Docker context exclusion with synthetic canaries, build linux/amd64 and smoke-test MCP initialization with networking disabled. They do not receive package-write permission or publish images. Production upgrades remain a separate owner-approved operation.
 
@@ -77,8 +77,8 @@ Pull requests also audit Docker context exclusion with synthetic canaries, build
 
 1. Update the version in `package.json`, regenerate `package-lock.json` with `npm install --package-lock-only --ignore-scripts`, and update the pinned image in this README and `docker-compose.example.yaml`.
 2. Run `npm test` locally.
-3. Commit and push to `main` to publish a `main` image for testing.
-4. Create and push a tag such as `v0.3.2` to publish `0.3.2` and `latest`. CI verifies that the tag matches `package.json`; a failed test prevents publication.
+3. Commit on a release/development branch, pass the full PR regression/official compatibility/image CI, then merge the approved PR into `main`; this publishes a `main` image for testing.
+4. Create a GitHub Release and a tag such as `v0.4.0` at the verified merge commit to publish `0.4.0` and `latest`. CI verifies that the tag matches `package.json`; a failed test prevents publication. Confirm both tags resolve to the reported publication digest and initialize with the expected version before announcing completion.
 5. After the first package publication, set the GHCR package visibility to **Public** in the package settings if GitHub created it as private by default.
 
 The workflow authenticates with the automatically provided `GITHUB_TOKEN`. Its test job has `contents: read`; only the publishing job also receives `packages: write`. No PAT, runtime API key, pairing token or tunnel credential is required for image publication. Actions are pinned to reviewed commit SHAs; update those pins when adopting an upstream release.
@@ -87,7 +87,7 @@ After making the package public, verify a pull without stored registry credentia
 
 ```bash
 anonymous_config=$(mktemp -d)
-docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2
+docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0
 docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:latest
 rmdir "$anonymous_config"
 ```

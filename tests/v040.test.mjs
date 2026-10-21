@@ -172,3 +172,102 @@ test('Feedback/draft pagination, inclusive dates and invalid ranges are explicit
  const p=await x.call('list_body_feedback',{from:'2000-02-01',to:'2000-02-03',limit:1});assert.equal(p.total,3);assert.equal(p.next_offset,1);assert.equal((await x.call('list_body_feedback',{from:'2000-02-02',to:'2000-02-02'})).total,1);await assert.rejects(()=>x.call('list_body_feedback',{from:'2000-03-01',to:'2000-02-01'}));
  await ready(x);await ready(x);assert.equal((await x.call('list_workout_drafts',{limit:1})).next_offset,1);
 });
+
+// PR #3 follow-up: all A/B/C plans and deletion/undo snapshots below are fictional.
+const abcPlans=()=>['A','B','C'].map((label,i)=>({id:`synthetic-plan-${i+1}-opaque`,name:`Synthetic ${label}`,ex:[{id:'a',sets:3,reps:8,weight:10}],_ts:10}));
+async function linkedDraft(x,routine){
+ let d=await x.call('start_workout_draft',{date:'2000-02-01',name:'Synthetic measured session',routine_id:routine.id});
+ assert.deepEqual(d.exercises,[]); // Plan targets must never be invented as actual results.
+ d=await edit(x,d,'draft_add_exercise',{exercise_id:'a'});
+ return edit(x,d,'draft_add_set',{exercise_index:0,set:{weight:3,reps:4}});
+}
+for(const [i,label] of ['A','B','C'].entries())test(`A/B/C link ${label} persists through restart, exact preview, backup, one PUT and reread`,async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);x.client.data.week={1:plans[0].id,3:plans[1].id,5:plans[2].id};
+ const before=structuredClone(x.client.data),d=await linkedDraft(x,plans[i]);
+ const restarted=new PersonalGymBridge({client:x.client,writes:true,localDirectory:x.directory,loadCatalogue:async()=>catalogue});
+ assert.equal((await restarted.features.call('get_workout_draft',{draft_id:d.draft_id})).routine_id,plans[i].id);
+ assert.equal((await x.call('list_workout_drafts')).records.find(r=>r.draft_id===d.draft_id).routine_id,plans[i].id);
+ const p=await preview(x,d);assert.equal(p.records[0].routine_id,plans[i].id);assert.deepEqual(p.records[0].routine_ids,[plans[i].id]);assert.equal(p.records[0].routine_name,plans[i].name);assert.equal(p.records[0].set_count,1);assert.equal(x.client.puts.length,0);
+ const saved=await x.call('commit_finished_workout_draft',approve(p));assert.equal(saved.verified,true);assert.equal(x.client.puts.length,1);assert.equal(x.backups.length,1);assert.deepEqual(x.backups[0].snapshot.state,before);
+ const actual=x.client.data.workouts.find(w=>w.id===saved.records[0].workout_id);assert.equal(actual.routineId,plans[i].id);assert.deepEqual(actual.routineIds,[plans[i].id]);assert.deepEqual(x.client.data.routines,before.routines);assert.deepEqual(x.client.data.week,before.week);
+ const detail=await x.call('get_workout',{workout_id:actual.id});assert.equal(detail.routine_id,plans[i].id);assert.deepEqual(detail.routine_ids,[plans[i].id]);await assert.rejects(()=>x.call('commit_finished_workout_draft',approve(p)));assert.equal(x.client.puts.length,1);
+});
+for(const routine_id of ['unknown-plan','A','',null])test(`Draft rejects unknown/invalid plan ${JSON.stringify(routine_id)} without creating a record`,async t=>{
+ const x=await harness(t);x.client.data.routines.push(...abcPlans());await assert.rejects(()=>x.call('start_workout_draft',{date:'2000-02-01',name:'Synthetic',routine_id}));assert.equal((await x.call('list_workout_drafts')).total,0);assert.equal(x.client.puts.length,0);
+});
+test('Unlinked legacy draft stays freestyle even when its name matches an A/B/C plan',async t=>{
+ const x=await harness(t);x.client.data.routines.push(...abcPlans());let d=await x.call('start_workout_draft',{date:'2000-02-01',name:'Synthetic A'});assert.equal(Object.hasOwn(d,'routine_id'),false);
+ d=await edit(x,d,'draft_add_exercise',{exercise_id:'b'});d=await edit(x,d,'draft_add_set',{exercise_index:0,set:{weight:2,reps:3}});const p=await preview(x,d);assert.equal(Object.hasOwn(p.records[0],'routine_id'),false);
+ await x.call('commit_finished_workout_draft',approve(p));const actual=x.client.data.workouts.find(w=>w.id===p.records[0].workout_id);assert.equal(Object.hasOwn(actual,'routineId'),false);assert.equal(Object.hasOwn(actual,'routineIds'),false);
+});
+test('Renamed plan retains its ID; deletion before preview fails closed and never detaches a linked draft',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);const d=await linkedDraft(x,plans[0]);
+ x.client.data.routines.find(r=>r.id===plans[0].id).name='Synthetic renamed A';const p=await preview(x,d);assert.equal(p.records[0].routine_id,plans[0].id);assert.equal(p.records[0].routine_name,'Synthetic renamed A');
+ x.client.data.routines=x.client.data.routines.filter(r=>r.id!==plans[0].id);x.client.rev++;
+ await assert.rejects(()=>preview(x,d));await assert.rejects(()=>x.call('commit_finished_workout_draft',approve(p)),e=>e.code==='conflict');assert.equal((await get(x,d)).routine_id,plans[0].id);assert.equal((await get(x,d)).status,'open');assert.equal(x.client.puts.length,0);
+});
+test('Native routine tombstone rejects both new links and finish preview, with no orphan proposal',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);const d=await linkedDraft(x,plans[0]);x.client.data.deleted={routines:{[plans[0].id]:10}};
+ await assert.rejects(()=>x.call('start_workout_draft',{date:'2000-02-01',name:'Synthetic',routine_id:plans[0].id}));await assert.rejects(()=>preview(x,d));assert.equal(x.bridge.writer.proposals.size,0);assert.equal(x.client.puts.length,0);
+ x.client.data.deleted.routines[plans[0].id]=-11;assert.equal((await preview(x,d)).records[0].routine_id,plans[0].id);
+});
+test('Linked draft still requires human approval, upstream conflict checks and successful mandatory backup',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);const d=await linkedDraft(x,plans[0]);let p=await preview(x,d);
+ await assert.rejects(()=>x.call('commit_finished_workout_draft',{proposal_id:p.proposal_id,confirmation:'yes'}));x.client.rev++;await assert.rejects(()=>x.call('commit_finished_workout_draft',approve(p)),e=>e.code==='conflict');
+ p=await preview(x,d);x.bridge.writer.backup={create:async()=>{throw new Error('Synthetic backup failure');}};await assert.rejects(()=>x.call('commit_finished_workout_draft',approve(p)),e=>e.code==='backup-failed');assert.equal((await get(x,d)).status,'open');assert.equal(x.client.puts.length,0);
+});
+test('Pending linked workout cannot recover through a native deletion; Undo restores exact read-only recovery once',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);const d=await linkedDraft(x,plans[1]),p=await preview(x,d),put=x.client.putData.bind(x.client);
+ x.client.putData=async payload=>{await put(payload);throw new Error('Synthetic timeout after accept');};await x.call('commit_finished_workout_draft',approve(p));
+ const actual=x.client.data.workouts.find(w=>w.id===p.records[0].workout_id);x.client.data.deleted={workouts:{[actual.id]:actual._ts+1}};assert.equal((await x.call('recover_workout_draft',{draft_id:d.draft_id})).recovered,false);
+ x.client.data.deleted.workouts[actual.id]=-100;const recovered=await x.call('recover_workout_draft',{draft_id:d.draft_id});assert.equal(recovered.recovered,true);assert.equal(recovered.draft.routine_id,plans[1].id);assert.deepEqual(actual.routineIds,[plans[1].id]);assert.equal(x.client.puts.length,1);
+});
+async function assertHistoryTotals(x,{workouts,volume,sets}){
+ const before=structuredClone(x.client.data),puts=x.client.puts.length;
+ const progress=await x.call('get_workout_progress',{exercise_id:'a'}),weekly=await x.call('get_weekly_training_summary',{from:'1999-12-27',to:'2000-01-16'});
+ assert.equal(progress.total,workouts);assert.equal(progress.totals_by_weight_basis.as_recorded?.volume??0,volume);assert.equal(progress.totals_by_weight_basis.as_recorded?.completed_work_sets??0,sets);
+ assert.equal(weekly.weeks.reduce((n,w)=>n+w.workouts,0),workouts);assert.equal(weekly.weeks.reduce((n,w)=>n+(w.volume_by_weight_basis.as_recorded??0),0),volume);assert.equal(weekly.weeks.reduce((n,w)=>n+w.completed_work_sets,0),sets);assert.equal(weekly.weeks.reduce((n,w)=>n+(w.muscles.chest?.primary_sets??0),0),sets);
+ assert.deepEqual(x.client.data,before);assert.equal(x.client.puts.length,puts);
+ return {progress,weekly};
+}
+test('Physical workout deletion and Undo recompute progress, volume, muscle sets and weekly differences without caching',async t=>{
+ const x=await harness(t,{writes:false}),original=structuredClone(x.client.data.workouts[0]);original._ts=10;
+ const second={id:'synthetic-second',d:'2000-01-08',name:'Synthetic second',_ts:12,entries:[{id:'a',sets:[{w:3,r:4,done:true}]}]};x.client.data.workouts=[original,second];await assertHistoryTotals(x,{workouts:2,volume:37,sets:2});
+ x.client.data.workouts=[second];x.client.data.deleted={workouts:{w1:20}};let r=await assertHistoryTotals(x,{workouts:1,volume:12,sets:1});assert.equal(r.weekly.weeks[0].workouts,0);assert.equal(r.weekly.weeks[1].change_from_previous_week.completed_work_sets,1);
+ x.client.data.workouts=[structuredClone(original),second];x.client.data.deleted.workouts.w1=-21;r=await assertHistoryTotals(x,{workouts:2,volume:37,sets:2});assert.equal(r.weekly.weeks[1].change_from_previous_week.completed_work_sets,0);
+ // Repeating reads or a later delete/Undo cycle must not accumulate duplicates.
+ await assertHistoryTotals(x,{workouts:2,volume:37,sets:2});x.client.data.deleted.workouts.w1=30;await assertHistoryTotals(x,{workouts:1,volume:12,sets:1});x.client.data.deleted.workouts.w1=-31;await assertHistoryTotals(x,{workouts:2,volume:37,sets:2});
+});
+for(const mark of [10,11,'12'])test(`Native tombstone ${JSON.stringify(mark)} suppresses stale/equal-timestamp workout despite cached vol/PR/held weight`,async t=>{
+ const x=await harness(t,{writes:false});x.client.data.workouts[0]._ts=10;x.client.data.workouts[0].vol=999999;x.client.data.deleted={workouts:{w1:mark},routines:{unrelated:999999}};await assertHistoryTotals(x,{workouts:0,volume:0,sets:0});
+});
+test('A workout edited after a positive removal and a negative add-back are counted; unrelated undone metadata is preserved',async t=>{
+ const x=await harness(t,{writes:false});x.client.data.workouts[0]._ts=21;x.client.data.deleted={workouts:{w1:20,'another-workout':999}};x.client.data.undone={'week.1':[1,2,3]};x.client.data.workouts[0]._u={note:[1,2,3]};await assertHistoryTotals(x,{workouts:1,volume:25,sets:1});
+ x.client.data.workouts[0]._ts=1;x.client.data.deleted.workouts.w1=-30;await assertHistoryTotals(x,{workouts:1,volume:25,sets:1});
+});
+test('Negative add-back stamp never fabricates a missing workout or restores absent sets',async t=>{
+ const x=await harness(t,{writes:false});x.client.data.workouts=[];x.client.data.deleted={workouts:{w1:-30}};await assertHistoryTotals(x,{workouts:0,volume:0,sets:0});
+});
+for(const field of ['end','start'])test(`Unstamped native/legacy workout uses ${field} fallback and official legacy deletion key`,async t=>{
+ const x=await harness(t,{writes:false}),w=x.client.data.workouts[0];delete w._ts;delete w.id;if(field==='start')delete w.end;const at=w[field],key=`${w.d}|${w.start}`;
+ x.client.data.deleted={workouts:{[key]:at-1}};await assertHistoryTotals(x,{workouts:1,volume:25,sets:1});x.client.data.deleted.workouts[key]=at;await assertHistoryTotals(x,{workouts:0,volume:0,sets:0});x.client.data.deleted.workouts[key]=-at;await assertHistoryTotals(x,{workouts:1,volume:25,sets:1});
+});
+test('Last workout deletion leaves zero weeks/records and Undo restores only measured data',async t=>{
+ const x=await harness(t,{writes:false}),saved=structuredClone(x.client.data.workouts[0]);x.client.data.workouts=[];x.client.data.deleted={workouts:{w1:20}};const r=await assertHistoryTotals(x,{workouts:0,volume:0,sets:0});assert.ok(r.weekly.weeks.every(w=>w.completed_work_sets===0&&Object.keys(w.muscles).length===0));
+ x.client.data.workouts=[saved];x.client.data.deleted.workouts.w1=-21;await assertHistoryTotals(x,{workouts:1,volume:25,sets:1});
+});
+test('Existing freestyle draft can link to A then B or unlink without changing measured sets; prior preview becomes stale',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);let d=await ready(x);const measured=structuredClone(d.exercises);
+ d=await edit(x,d,'draft_set_routine',{routine_id:plans[0].id});const p=await preview(x,d);assert.equal(p.records[0].routine_id,plans[0].id);
+ d=await edit(x,d,'draft_set_routine',{routine_id:plans[1].id});assert.deepEqual(d.exercises,measured);await assert.rejects(()=>x.call('commit_finished_workout_draft',approve(p)),e=>e.code==='conflict');assert.equal(x.client.puts.length,0);
+ assert.equal((await preview(x,d)).records[0].routine_id,plans[1].id);d=await edit(x,d,'draft_set_routine',{routine_id:null});assert.deepEqual(d.exercises,measured);assert.equal(Object.hasOwn(d,'routine_id'),false);assert.equal(Object.hasOwn((await preview(x,d)).records[0],'routine_id'),false);
+});
+test('Draft relinking rejects unknown target, stale revision and extra fields before changing anything',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);const d=await ready(x);
+ await assert.rejects(()=>edit(x,d,'draft_set_routine',{routine_id:'unknown'}));await assert.rejects(()=>edit(x,d,'draft_set_routine',{routine_id:plans[0].id,guess_by_name:true}));assert.equal((await get(x,d)).revision,d.revision);
+ const newer=await edit(x,d,'draft_set_routine',{routine_id:plans[0].id});await assert.rejects(()=>edit(x,d,'draft_set_routine',{routine_id:plans[1].id}),e=>e.code==='conflict');assert.equal((await get(x,d)).routine_id,newer.routine_id);assert.equal(x.client.puts.length,0);
+});
+test('Pending/committed drafts cannot be relinked and read-only configuration hides the relink tool',async t=>{
+ const x=await harness(t),plans=abcPlans();x.client.data.routines.push(...plans);let d=await linkedDraft(x,plans[0]);const p=await preview(x,d),put=x.client.putData.bind(x.client);x.client.putData=async payload=>{await put(payload);throw new Error('Synthetic timeout');};await x.call('commit_finished_workout_draft',approve(p));d=await get(x,d);
+ await assert.rejects(()=>edit(x,d,'draft_set_routine',{routine_id:plans[1].id}));await x.call('recover_workout_draft',{draft_id:d.draft_id});d=await get(x,d);await assert.rejects(()=>edit(x,d,'draft_set_routine',{routine_id:null}));assert.equal(x.client.puts.length,1);assert.ok(!listTools(false).some(t=>t.name==='draft_set_routine'));
+});

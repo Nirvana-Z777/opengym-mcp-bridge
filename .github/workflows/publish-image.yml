@@ -200,3 +200,50 @@ jobs:
             assert.deepEqual(readdirSync("/store"), []);
             console.log(`Verified runtime image; MCP version: ${version}; no bundled credentials or user data`);
           '
+      - name: Verify anonymous release pulls, architecture, version and matching digests
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          IMAGE_REPOSITORY: ghcr.io/nirvana-z777/opengym-mcp-bridge
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          anonymous_config=$(mktemp -d)
+          trap 'rm -rf "$anonymous_config"' EXIT
+          release_version=${RELEASE_TAG#v}
+          for image_tag in "$release_version" latest; do
+            image_ref="$IMAGE_REPOSITORY:$image_tag"
+            docker --config "$anonymous_config" pull --platform linux/amd64 "$image_ref"
+            docker --config "$anonymous_config" image inspect "$image_ref" > "$anonymous_config/image.json"
+            EXPECTED_VERSION="$release_version" node --input-type=module - "$anonymous_config/image.json" <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const [image] = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          assert.equal(image.Os, 'linux');
+          assert.equal(image.Architecture, 'amd64');
+          assert.ok(image.RepoDigests.includes(`${process.env.IMAGE_REPOSITORY}@${process.env.IMAGE_DIGEST}`));
+          assert.equal(image.Config.Labels['org.opencontainers.image.version'], process.env.EXPECTED_VERSION);
+          console.log(`Anonymous pull verified: linux/amd64; version=${process.env.EXPECTED_VERSION}; digest=${process.env.IMAGE_DIGEST}`);
+          JS
+            docker --config "$anonymous_config" run --rm --network none --entrypoint node \
+              -e EXPECTED_VERSION="$release_version" "$image_ref" --input-type=module -e '
+              import assert from "node:assert/strict";
+              import { readFileSync } from "node:fs";
+              import { dispatch } from "./src/mcp.mjs";
+              const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+              assert.equal(version, process.env.EXPECTED_VERSION);
+              const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
+              assert.equal(reply.result.serverInfo.version, process.env.EXPECTED_VERSION);
+              console.log(`Release runtime verified: ${version}`);
+            '
+          done
+          {
+            echo '### Verified release image'
+            echo
+            echo "- Version: $release_version"
+            echo '- Platform: linux/amd64'
+            echo "- Digest: $IMAGE_DIGEST"
+            echo "- Anonymous pulls: $release_version and latest passed; both resolve to the publication digest"
+            echo "- Immutable image: $IMAGE_REPOSITORY@$IMAGE_DIGEST"
+          } >> "$GITHUB_STEP_SUMMARY"

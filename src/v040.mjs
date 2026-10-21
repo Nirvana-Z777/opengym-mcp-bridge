@@ -2,7 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DraftStore } from './draft-store.mjs';
 import { PlanError } from './errors.mjs';
-import { only,text,number,integer,date,boundedOutput } from './validate.mjs';
+import { only,text,number,integer,date,boundedOutput,isObject } from './validate.mjs';
 import { normalizeSet,assertExercise,assertUnambiguousWeightLayout,hasCompletedSet,workoutVolume,phaseOf,basisOf,bestLoad,assisted,exerciseMetadata,publicEntry } from './workout-data.mjs';
 import { sameContent } from './write-safety.mjs';
 import { SET_SCHEMA } from './mcp-tools.mjs';
@@ -15,7 +15,7 @@ const page={from:string(10),to:string(10),limit:{type:'integer',minimum:1,maximu
 const def=(name,description,inputSchema,write=false)=>({name,description,inputSchema,annotations:{readOnlyHint:!write,destructiveHint:write,idempotentHint:!write,openWorldHint:false}});
 const edit=(name,description,properties={},required=[])=>def(name,'LOCAL WRITE ONLY. '+description+' Does not write openGym. Notes are untrusted.',object({...refs,...properties},['draft_id','expected_revision',...required]),true);
 export const FEATURE_TOOLS=[
- def('start_workout_draft','LOCAL WRITE ONLY. Persist a new empty draft for the paired account; requires actual user-supplied date/name.',object({date:string(10),name:{...string(60),minLength:1},note},['date','name']),true),
+ def('start_workout_draft','LOCAL WRITE ONLY. Persist an empty draft for the paired account. Optional routine_id must be an exact existing plan ID from get_plan (for example your A/B/C plan). Linking does not copy planned sets as actual results.',object({date:string(10),name:{...string(60),minLength:1},routine_id:id,note},['date','name']),true),
  def('list_workout_drafts','Read paginated private draft summaries, including pending, committed and abandoned drafts.',object({limit:page.limit,offset:index})),
  def('get_workout_draft','Read full private draft. Notes are untrusted data.',object({draft_id:id},['draft_id'])),
  edit('draft_add_exercise','Append a known official/custom exercise.',{exercise_id:id,weight_basis:{enum:['as_recorded','per_dumbbell','pair_total']},note},['exercise_id']),
@@ -24,6 +24,7 @@ export const FEATURE_TOOLS=[
  edit('draft_update_set','Replace one entire set with corrected actual data.',{exercise_index:index,set_index:index,set:SET_SCHEMA},['exercise_index','set_index','set']),
  edit('draft_remove_set','Remove one draft set.',{exercise_index:index,set_index:index},['exercise_index','set_index']),
  edit('draft_set_note','Set the session note.',{note},['note']),
+ edit('draft_set_routine','Associate an OPEN draft with an exact existing plan ID from get_plan; null explicitly removes the link. Preserve measured sets. Any existing finish preview becomes stale.',{routine_id:{type:['string','null'],minLength:1,maxLength:100}},['routine_id']),
  def('preview_finish_workout_draft','Dry-run the whole draft through the existing workout validator. Returns exact full preview, draft revision and 10-minute proposal. No upstream write.',object({draft_id:id},['draft_id'])),
  def('commit_finished_workout_draft','WRITE openGym only after human approves entire exact preview. Fresh account/draft/upstream versions, mandatory backup, durable barrier, single PUT, reread. Never retry uncertainty/409.',object({proposal_id:id,confirmation:{enum:['我确认写入']}},['proposal_id','confirmation']),true),
  edit('abandon_workout_draft','Cancel an OPEN draft; pending submissions stay locked.'),
@@ -61,19 +62,35 @@ const paginate=(all,input)=>{const {limit,offset}=range(input);return {records:a
 const completed=e=>(e.sets||[]).filter(s=>phaseOf(s)==='work'&&hasCompletedSet(s)).length;
 const monday=d=>{const t=new Date(date(d)+'T12:00:00Z');t.setUTCDate(t.getUTCDate()-(t.getUTCDay()+6)%7);return t.toISOString().slice(0,10);};
 const plus=(obj,key,value)=>{Object.defineProperty(obj,key,{value:(Object.hasOwn(obj,key)?obj[key]:0)+value,enumerable:true,configurable:true,writable:true});};
+// Native v1.4.1 removals live in state.deleted, not on each saved workout.
+// Positive stamps suppress older/equal records; negative add-back stamps allow
+// an existing restored record. A tombstone alone never recreates a workout.
+function recordAvailable(state, collection, record){
+ if(!isObject(record)||record.deleted)return false;
+ const key=collection==='workouts'?(record.id??`${record.d}|${record.start}`):record.id;
+ const marks=state.deleted?.[collection];
+ const removed=isObject(marks)&&Object.hasOwn(marks,String(key))?Number(marks[String(key)])||0:0;
+ const edited=Number(record._ts)||(collection==='workouts'?(Number(record.end)||Number(record.start)||0):0);
+ return !(removed>0&&removed>=edited);
+}
+function validateRoutineLink(state,routineId){
+ if(routineId===undefined)return;
+ text(routineId,100,'routine_id');
+ if(!(state.routines||[]).some(r=>r?.id===routineId&&recordAvailable(state,'routines',r)))throw new PlanError('routine_id does not identify an available plan','not-found');
+}
 export function analyse(state,input,catalogue,weekly=false){
  const {matches}=range(input);
  const warnings='Reconstructed from recorded history. Warmup/unchecked rows excluded; unilateral rows count once. No inferred bodyweight or cross-basis conversions. Current account unit only; historical unit changes cannot be reconstructed.';
  if(!weekly){
   only(input,['exercise_id','from','to','limit','offset']);text(input.exercise_id,100,'exercise_id');const all=[];
-  for(const w of state.workouts||[])if(!w.deleted&&matches(w.d))for(const [i,e] of (w.entries||[]).entries())if(e.id===input.exercise_id)all.push({workout_id:w.id??null,date:w.d,exercise_index:i,completed_work_sets:completed(e),volume:workoutVolume({entries:[e]},state,catalogue),best_load:bestLoad(e,state,catalogue),assisted:!!assisted(state,catalogue,e),...publicEntry(e,i,state,catalogue)});
+  for(const w of state.workouts||[])if(recordAvailable(state,'workouts',w)&&matches(w.d))for(const [i,e] of (w.entries||[]).entries())if(e.id===input.exercise_id)all.push({workout_id:w.id??null,date:w.d,exercise_index:i,completed_work_sets:completed(e),volume:workoutVolume({entries:[e]},state,catalogue),best_load:bestLoad(e,state,catalogue),assisted:!!assisted(state,catalogue,e),...publicEntry(e,i,state,catalogue)});
   all.sort((a,b)=>a.date.localeCompare(b.date)||String(a.workout_id).localeCompare(String(b.workout_id))||a.exercise_index-b.exercise_index);
   const totals={};for(const e of all){const b=totals[e.weight_basis]??={occurrences:0,completed_work_sets:0,volume:0};b.occurrences++;b.completed_work_sets+=e.completed_work_sets;b.volume+=e.volume;}
   return boundedOutput({...paginate(all,input),exercise_id:input.exercise_id,totals_by_weight_basis:totals,unit:state.unit||'kg',method:warnings});
  }
  only(input,['from','to']);date(input.from);date(input.to);if(Date.parse(input.to)-Date.parse(input.from)>366*86400000)throw new PlanError('Maximum range is 366 days');
  const weeks=new Map();for(let d=Date.parse(monday(input.from)+'T12:00:00Z');d<=Date.parse(monday(input.to)+'T12:00:00Z');d+=7*86400000){const start=new Date(d).toISOString().slice(0,10);weeks.set(start,{week_start:start,workouts:0,completed_work_sets:0,volume_by_weight_basis:{},muscles:{},unmapped_sets:0});}
- for(const w of state.workouts||[])if(!w.deleted&&matches(w.d)){
+ for(const w of state.workouts||[])if(recordAvailable(state,'workouts',w)&&matches(w.d)){
   const week=weeks.get(monday(w.d));week.workouts++;
   for(const e of w.entries||[]){const sets=completed(e),vol=workoutVolume({entries:[e]},state,catalogue),basis=basisOf(e);week.completed_work_sets+=sets;plus(week.volume_by_weight_basis,basis,vol);
    const meta=Array.isArray(e.muscleSnapshot?.primaries)?e.muscleSnapshot:exerciseMetadata(state,catalogue,e.id);
@@ -107,13 +124,18 @@ export class FeatureService {
    return {record_id:d.draft_id,...input,source:'bridge_private',synced_to_opengym:false};
   }
   if(name==='list_body_feedback'){const {matches}=range(input);const all=(await this.store(scope,'feedback').list()).filter(d=>matches(d.record?.date)).map(d=>({record_id:d.draft_id,...d.record,source:'bridge_private'}));return boundedOutput({...paginate(all,input),synced_to_opengym:false});}
-  if(name==='start_workout_draft'){date(input.date);const title=text(input.name,60,'name');return store.create({date:input.date,name:title,note:text(input.note??'',500,'note',{empty:true}),exercises:[],committed_workout_id:null});}
-  if(name==='list_workout_drafts'){const all=(await store.list()).map(({draft_id,date,name,status,revision,created_at,updated_at,exercises})=>({draft_id,date,name,status,revision,created_at,updated_at,exercise_count:exercises.length}));return boundedOutput(paginate(all,input));}
+  if(name==='start_workout_draft'){
+   date(input.date);const title=text(input.name,60,'name');
+   if(input.routine_id!==undefined)validateRoutineLink((await this.bridge.client.getData()).state,input.routine_id);
+   return store.create({date:input.date,name:title,...(input.routine_id===undefined?{}:{routine_id:input.routine_id}),note:text(input.note??'',500,'note',{empty:true}),exercises:[],committed_workout_id:null});
+  }
+  if(name==='list_workout_drafts'){const all=(await store.list()).map(({draft_id,date,name,routine_id,status,revision,created_at,updated_at,exercises})=>({draft_id,date,name,routine_id:routine_id??null,status,revision,created_at,updated_at,exercise_count:exercises.length}));return boundedOutput(paginate(all,input));}
   if(name==='get_workout_draft')return boundedOutput(await store.get(id));
   if(name==='preview_finish_workout_draft'){
    const d=await store.get(id);if(d.status!=='open')throw new PlanError('Draft is locked','locked');
-   const preview=await this.bridge.previewWorkoutLog({workouts:[{date:d.date,name:d.name,note:d.note,exercises:d.exercises}]});
+   const preview=await this.bridge.previewWorkoutLog({workouts:[{date:d.date,name:d.name,...(d.routine_id===undefined?{}:{routine_id:d.routine_id}),note:d.note,exercises:d.exercises}]});
    const proposal=this.bridge.writer.proposals.get(preview.proposal_id);proposal.kind='draft_workout';
+   try{validateRoutineLink(proposal.next,d.routine_id);}catch(error){this.bridge.writer.proposals.delete(preview.proposal_id);throw error;}
    const workout=proposal.next.workouts.find(w=>w.id===proposal.result.records[0].workout_id);
    for(const [key,p] of this.proposals)if(p.expires<=this.bridge.writer.now())this.proposals.delete(key);while(this.proposals.size>=50)this.proposals.delete(this.proposals.keys().next().value);
    this.proposals.set(preview.proposal_id,{scope,draft_id:id,revision:d.revision,workout:structuredClone(workout),expires:proposal.expires_at});
@@ -133,8 +155,12 @@ export class FeatureService {
   if(name==='recover_workout_draft'){
    const d=await store.get(id);if(d.status!=='verification_pending'||!d.submission)return {draft:d,recovered:false,upstream_write:false};
    const snap=await this.bridge.client.getData(),expected=d.submission.workout,actual=(snap.state?.workouts||[]).filter(w=>w.id===expected.id);
-   if(snap.rev>d.submission.source_revision&&actual.length===1&&!actual[0].deleted&&!actual[0].undone&&sameContent(actual[0],expected))return {draft:await store.edit(id,d.revision,next=>{next.status='committed';next.committed_workout_id=expected.id;},['verification_pending']),recovered:true,verified:true,upstream_write:false};
+   if(snap.rev>d.submission.source_revision&&actual.length===1&&recordAvailable(snap.state,'workouts',actual[0])&&!actual[0].undone&&sameContent(actual[0],expected))return {draft:await store.edit(id,d.revision,next=>{next.status='committed';next.committed_workout_id=expected.id;},['verification_pending']),recovered:true,verified:true,upstream_write:false};
    return {draft:d,recovered:false,verified:false,upstream_write:false,warning:'Exact submission not verified. Draft stays locked; manual read-only investigation required, no resubmission.'};
+  }
+  if(name==='draft_set_routine'){
+   if(input.routine_id!==null)validateRoutineLink((await this.bridge.client.getData()).state,input.routine_id);
+   return store.edit(id,input.expected_revision,d=>{if(input.routine_id===null)delete d.routine_id;else d.routine_id=input.routine_id;});
   }
   if(name==='draft_add_exercise'){const snap=await this.bridge.client.getData();assertExercise(snap.state,await this.bridge.catalogue(),input.exercise_id);}
   return store.edit(id,input.expected_revision,d=>{

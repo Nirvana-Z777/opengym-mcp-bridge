@@ -149,6 +149,30 @@ jobs:
           '
 
 
+      - name: Start the actual container entry point and verify MCP initialization and tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          startup_output=$(mktemp)
+          trap 'rm -f "$startup_output"' EXIT
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | docker run --rm -i --network none \
+              -e OPENGYM_BASE_URL=http://127.0.0.1:1 \
+              -e MCP_TRANSPORT=stdio -e OPENGYM_ALLOW_WRITES=1 \
+              opengym-bridge:ci > "$startup_output"
+          node --input-type=module - "$startup_output" <<'JS'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const replies = readFileSync(process.argv[2], 'utf8').trim().split('\n').map(line => JSON.parse(line));
+          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+          assert.equal(replies.length, 2);
+          assert.equal(replies[0].result.serverInfo.version, version);
+          assert.equal(replies[1].result.tools.length, 37);
+          console.log(`Verified actual container startup; MCP version: ${version}; 37 tools; network disabled`);
+          JS
+
   publish:
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: build

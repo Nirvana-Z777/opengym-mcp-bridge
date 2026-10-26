@@ -1,10 +1,16 @@
 # Backup, release and deployment procedure
 
-The v0.3.2 release uses `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.3.2`. Package metadata, README and the repository Compose example are aligned to 0.3.2. Release preparation and CI do not change production NAS/container/Tunnel configuration; existing 0.3.1 deployments require a separately authorized upgrade.
+The published release remains `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0`. This branch has development package metadata **0.4.1**, but the README/Compose deployment pin stays at the published 0.4.0 until a separately approved release. PR development and CI do not change production NAS/container/Tunnel configuration or publish packages.
 
 ## Mandatory local backups
 
-All four formal writers share the same guard. Successful preview and human confirmation are followed by a fresh revision/write-ID/content check, then a mandatory backup, then at most one PUT. Backup failure means no PUT. There is no opt-out setting.
+Every upstream writer, including draft completion, shares the same guard. Successful preview and human confirmation are followed by a fresh revision/write-ID/content check, then a mandatory backup, then at most one PUT. Backup failure means no PUT. There is no opt-out setting. Local drafts/feedback are separately durable under `/store/local/` and should be retained with `/store/backups/`.
+
+## Optional catalogue refresh for v0.4.1
+
+The maintenance importer reads only three text/JSON files from the fixed official v1.4.2 commit: EXDB, the independent muscle map and Chinese names. Each file's SHA-256 and parsed shape must match before an atomic replacement; HTTP, transport, digest or parse failures keep the old catalogue. It downloads no media, touches no openGym state and performs no history migration. Existing format-2 and names-only files remain readable. They do not automatically acquire the v1.4.2 row corrections: a separately authorized operator must refresh the optional text catalogue using `node src/catalogue.mjs` in the intended Bridge environment.
+
+Record the existing catalogue source and retain a private copy before that maintenance. Keep writes off and discard old preview IDs around a refresh; new previews should use the new metadata consistently. Verify `source_version`, `source_commit` and `source_digests` in the local catalogue, and the returned weekly `muscle_weight_catalogue`. Historical explicit weight snapshots remain authoritative even when the refreshed catalogue differs. No production refresh is performed by this PR.
 
 Default location is `backups/` beside `CATALOGUE_NAMES_FILE`: with the existing Compose `/store/exercise-names.json`, it is `/store/backups/` inside the container, using the existing `./store:/store` mount. Optional `OPENGYM_BACKUP_DIR` selects a dedicated backup directory; `OPENGYM_BACKUP_KEEP` is 1–100, default 20. Configure environment variables directly on the Bridge only if deviating from defaults. The sample Compose does not need a new mount or port.
 
@@ -25,15 +31,15 @@ Recovery is an intentional data change and requires the owner's approval. Do thi
 
 After the owner approves the PR and formal release:
 
-1. Merge the reviewed PR. Update `package.json` to 0.3.2 and regenerate the matching lockfile; change README/Compose release pins together. Check MCP initialization derives 0.3.2 from the package.
-2. Run all tests and security/context checks again. Push the release preparation to main. The workflow publishes only the development `main` image from this push. Verify its tests, runtime build and isolated MCP smoke test.
-3. Create/push `v0.3.2` only after main succeeds. The existing `GITHUB_TOKEN` publishes `0.3.2` and `latest` for linux/amd64. Verify tag/package parity, image digest and MCP version inside the published image.
+1. On the development branch, align package/lock metadata and README/Compose release pins to the approved target version (0.4.1 for the next release). Check MCP initialization derives that version from the package. Do not claim an unpublished image is available.
+2. Pass the complete regression suite, both pinned official compatibility jobs, security/context checks and isolated Docker runtime smoke test on the final PR head. Only then merge the approved PR; main publishes its development `main` image.
+3. Create/push the approved version tag only after main succeeds. The existing `GITHUB_TOKEN` publishes the version and `latest` for linux/amd64. Verify tag/package parity, image digest and MCP version inside the published image. This maintenance PR does not authorize that step.
 4. Confirm package visibility Public and anonymous pull using an empty Docker config. No PAT, pairing token or runtime API key belongs in Actions. PR CI only builds/tests an ephemeral local image; it never logs into GHCR or pushes an image.
 
 ## Production upgrade and rollback advice
 
-Production upgrade is a separate authorization after release. Keep the currently pinned 0.3.1 image and working configuration. First test the new image with a separate synthetic account, especially Android/web synchronization, load meaning, custom renames and conflict behavior. Release preparation did not perform live cross-device acceptance checks.
+Production upgrade is a separate authorization after release. Keep the currently pinned 0.4.0 image/digest and working configuration. First test the new image with a separate synthetic account, especially Android/web synchronization, load meaning, custom renames and conflict behavior. The CI frontend store checks do not replace real device acceptance.
 
-For an authorized upgrade, privately back up the current Compose configuration and data, note the current image digest, keep writes off, and pull the immutable 0.3.2 image. Refresh only the optional text catalogue if needed, without touching credentials or other store files. Recreate only the Bridge service; leave openGym and Tunnel running. Check health/MCP initialization and read-only queries before allowing a small previewed write.
+For an authorized upgrade, privately back up the current Compose configuration and data (including private drafts, feedback, backups and catalogue), note the current image digest, keep writes off, and pull the approved immutable image. Refresh only the optional text catalogue if needed, without touching credentials or other store files. Recreate only the Bridge service; leave openGym and Tunnel running. Check health/MCP initialization and read-only queries before allowing a small previewed write.
 
-To roll back code, pin the previous 0.3.1 digest/tag and recreate only the Bridge service. Do not delete store/secrets or replace training data with an old snapshot. Code rollback does not undo already accepted training edits; use reviewed selective recovery above if required. No Watchtower or unattended production replacement is introduced.
+To roll back code, pin the previous known-good digest/tag and recreate only the Bridge service. Retain the private local store even if the older code cannot show a newer projection. Do not delete store/secrets or replace training data with an old snapshot. Code rollback does not undo already accepted training edits; use reviewed selective recovery above if required. No Watchtower or unattended production replacement is introduced.

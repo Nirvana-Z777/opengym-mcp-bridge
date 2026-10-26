@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import {createHash} from 'node:crypto';
 import { OpenGymClient } from '../src/openGym.mjs';
 import { extractCatalogueArray, importCatalogue, loadCatalogue } from '../src/catalogue.mjs';
 // All identities, pairing codes, body weights, dates, and per-set values in this file are fictional test fixtures and are not from any user.
@@ -41,9 +42,11 @@ test('Official catalogue text is parsed without eval, names are imported',async(
   const js='// test\nexport const EXDB='+JSON.stringify(data)+';export const EXALIAS={};';
   const parsed=extractCatalogueArray(js);
   assert.equal(parsed.length,1002);
-  const fakeFetch=async url=>new Response(url.includes('/i18n/zh.json')?JSON.stringify({'0001':{name:'俯卧撑'}}):js,{status:200});
+  const source={'frontend/src/lib/exercises-data.js':js,'frontend/src/lib/exercise-muscle-map.json':JSON.stringify({'0001':{primaries:['chest'],secondaries:[]}}),'catalogue/i18n/zh.json':JSON.stringify({'0001':{name:'俯卧撑'}})};
+  const digests=Object.fromEntries(Object.entries(source).map(([key,value])=>[key,createHash('sha256').update(value).digest('hex')]));
+  const fakeFetch=async url=>new Response(source[Object.keys(source).find(k=>url.endsWith('/'+k))],{status:200});
   try{
-    const result=await importCatalogue(out,{fetchImpl:fakeFetch});
+    const result=await importCatalogue(out,{fetchImpl:fakeFetch,digests});
     assert.equal(result.count,1002);
     assert.equal(result.translated,1);
     const names=await loadCatalogue(out);

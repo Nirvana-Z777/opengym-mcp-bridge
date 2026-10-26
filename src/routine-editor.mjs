@@ -22,7 +22,8 @@ export function applyRoutineEditAction(state,a,names={}){
  }else if(a.type==='replace_routine_exercise'){
   only(a,['type','routine_id','exercise_index','exercise']);const i=index(a.exercise_index,list.length),old=list[i],next=slot(state,a.exercise,names);
   if(!isObject(old)||list.some((e,j)=>j!==i&&e.id===next.id))throw new PlanError('Invalid or duplicate replacement');
-  if(old.id!==next.id&&Object.keys(old).some(k=>!['id','sets','reps','weight','restSec'].includes(k)))throw new PlanError('Unknown exercise extension fields; replacement refused');
+  // subs and warmup/side rest settings belong to this exercise: do not guess a migration.
+  if(old.id!==next.id&&Object.keys(old).some(k=>!['id','sets','reps','weight','restSec'].includes(k)))throw new PlanError('Exercise configuration/extension fields cannot be safely migrated; replacement refused');
   list[i]=old.id===next.id?{...old,...next}:{...next,...(old.restSec===undefined?{}:{restSec:old.restSec})};
  }else throw new PlanError('Unknown routine edit');
  return JSON.stringify(before)===JSON.stringify(routine)?[]:[{type:a.type,routine_id:routine.id,before,after:structuredClone(routine)}];

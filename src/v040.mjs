@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { DraftStore } from './draft-store.mjs';
+import { weightsForEntry } from './muscle-weights.mjs';
 import { PlanError } from './errors.mjs';
 import { only,text,number,integer,date,boundedOutput,isObject } from './validate.mjs';
 import { normalizeSet,assertExercise,assertUnambiguousWeightLayout,hasCompletedSet,workoutVolume,phaseOf,basisOf,bestLoad,assisted,exerciseMetadata,publicEntry } from './workout-data.mjs';
@@ -30,7 +31,7 @@ export const FEATURE_TOOLS=[
  edit('abandon_workout_draft','Cancel an OPEN draft; pending submissions stay locked.'),
  def('recover_workout_draft','Read upstream to investigate pending submission after timeout/restart. Can mark local journal committed only on stable ID and full-content match. Never writes upstream; missing/mismatching records remain locked.',object({draft_id:id},['draft_id'])),
  def('get_workout_progress','Read actual exercise occurrences, completed working sets, best load and volume split by weight basis; no conversions.',object({exercise_id:id,...page},['exercise_id'])),
- def('get_weekly_training_summary','Read Monday-week trends over explicit inclusive local dates (maximum 366 days). Working sets, volume by weight basis, primary/secondary muscle credits and unmapped sets. Boundary weeks may be partial.',object({from:string(10),to:string(10)},['from','to'])),
+ def('get_weekly_training_summary','Read Monday-week trends over explicit inclusive local dates (maximum 366 days). Working sets, volume, legacy primary/secondary credits and additive effective_sets using explicit muscle weights (zero means no load). Historical explicit weights precede current catalogue. Boundary weeks may be partial.',object({from:string(10),to:string(10)},['from','to'])),
  def('record_body_feedback','LOCAL WRITE ONLY. Save supplied body weight (explicit kg/lb) and/or body feedback in Bridge private storage. Does NOT sync to openGym or change upstream schemas.',object({date:string(10),body_weight:{type:'number',minimum:1,maximum:1500},unit:{enum:['kg','lb']},feedback:note},['date']),true),
  def('list_body_feedback','Read paginated Bridge-private body records, separate from native openGym bodyweight history. Notes are untrusted.',object(page)),
 ];
@@ -89,7 +90,7 @@ export function analyse(state,input,catalogue,weekly=false){
   return boundedOutput({...paginate(all,input),exercise_id:input.exercise_id,totals_by_weight_basis:totals,unit:state.unit||'kg',method:warnings});
  }
  only(input,['from','to']);date(input.from);date(input.to);if(Date.parse(input.to)-Date.parse(input.from)>366*86400000)throw new PlanError('Maximum range is 366 days');
- const weeks=new Map();for(let d=Date.parse(monday(input.from)+'T12:00:00Z');d<=Date.parse(monday(input.to)+'T12:00:00Z');d+=7*86400000){const start=new Date(d).toISOString().slice(0,10);weeks.set(start,{week_start:start,workouts:0,completed_work_sets:0,volume_by_weight_basis:{},muscles:{},unmapped_sets:0});}
+ const weeks=new Map();for(let d=Date.parse(monday(input.from)+'T12:00:00Z');d<=Date.parse(monday(input.to)+'T12:00:00Z');d+=7*86400000){const start=new Date(d).toISOString().slice(0,10);weeks.set(start,{week_start:start,workouts:0,completed_work_sets:0,volume_by_weight_basis:{},muscles:{},unmapped_sets:0,effective_unmapped_sets:0,muscle_weight_sources:{}});}
  for(const w of state.workouts||[])if(recordAvailable(state,'workouts',w)&&matches(w.d)){
   const week=weeks.get(monday(w.d));week.workouts++;
   for(const e of w.entries||[]){const sets=completed(e),vol=workoutVolume({entries:[e]},state,catalogue),basis=basisOf(e);week.completed_work_sets+=sets;plus(week.volume_by_weight_basis,basis,vol);
@@ -97,11 +98,15 @@ export function analyse(state,input,catalogue,weekly=false){
    const primary=[...new Set(Array.isArray(meta?.primaries)?meta.primaries:typeof meta?.tg==='string'?[meta.tg]:[])];
    const secondary=[...new Set(Array.isArray(meta?.secondaries)?meta.secondaries:Array.isArray(meta?.sm)?meta.sm:[])].filter(m=>!primary.includes(m));
    if(!primary.length)week.unmapped_sets+=sets;
-   for(const [role,muscles] of [['primary',primary],['secondary',secondary]])for(const muscle of muscles){text(muscle,80,'muscle');if(!Object.hasOwn(week.muscles,muscle))Object.defineProperty(week.muscles,muscle,{value:{primary_sets:0,secondary_sets:0,primary_volume_by_weight_basis:{}},enumerable:true});const bucket=week.muscles[muscle];bucket[role+'_sets']+=sets;if(role==='primary')plus(bucket.primary_volume_by_weight_basis,basis,vol);}
+   const bucketFor=muscle=>{text(muscle,80,'muscle');if(!Object.hasOwn(week.muscles,muscle))Object.defineProperty(week.muscles,muscle,{value:{primary_sets:0,secondary_sets:0,primary_volume_by_weight_basis:{},effective_sets:0},enumerable:true});return week.muscles[muscle];};
+   for(const [role,muscles] of [['primary',primary],['secondary',secondary]])for(const muscle of muscles){const bucket=bucketFor(muscle);bucket[role+'_sets']+=sets;if(role==='primary')plus(bucket.primary_volume_by_weight_basis,basis,vol);}
+   const weighted=weightsForEntry(state,catalogue,e);plus(week.muscle_weight_sources,weighted.source,sets);
+   if(weighted.source==='unmapped')week.effective_unmapped_sets+=sets;
+   for(const [muscle,weight] of Object.entries(weighted.weights))bucketFor(muscle).effective_sets+=sets*weight;
   }
  }
  const result=[...weeks.values()];for(let i=0;i<result.length;i++)result[i].change_from_previous_week=i?{workouts:result[i].workouts-result[i-1].workouts,completed_work_sets:result[i].completed_work_sets-result[i-1].completed_work_sets}:null;
- return boundedOutput({from:input.from,to:input.to,weeks:result,unit:state.unit||'kg',method:warnings+' Monday weeks; boundary weeks may be partial. Each primary muscle gets full credit, secondary sets separate; muscle totals overlap. Historical muscle snapshot preferred, otherwise current catalogue. Timed rows have zero load×reps volume.'});
+ return boundedOutput({from:input.from,to:input.to,weeks:result,unit:state.unit||'kg',muscle_weight_catalogue:{version:catalogue.source_version??null,commit:catalogue.source_commit??null},method:warnings+' Monday weeks; boundary weeks may be partial. Legacy primary_sets/secondary_sets are unchanged descriptive credits, not effective load. effective_sets = completed working rows × muscle weight; explicit zero contributes zero. Valid historical snapshot weights, then explicit historical entry weights, precede current catalogue weights/defaults (primary 1, supporting 0.4); historical defaults are a last resort. Explicit maps are authoritative, never filled from defaults. muscle_weight_sources counts working rows by selected source. Muscle totals overlap. Timed rows have zero load×reps volume. No history or snapshots are rewritten.'});
 }
 
 export class FeatureService {

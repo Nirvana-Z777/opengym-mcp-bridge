@@ -1,4 +1,4 @@
-// Independently implemented adapters for the published openGym v1.4.1 data contract.
+// Independently implemented adapters for the published openGym v1.4.1/v1.4.2 contract.
 // See docs/compatibility.md for the reviewed upstream interfaces and limitations.
 import { PlanError } from './errors.mjs';
 import { isDeepStrictEqual } from 'node:util';
@@ -213,11 +213,25 @@ export function publicSet(row, entry = {}) {
   if (Array.isArray(row.clusters)) out.clusters = row.clusters.map(c => Object.fromEntries([['reps',c?.r],['rest_seconds',c?.restSec]].filter(([,v])=>typeof v==='number')));
   return out;
 }
+export function publicRoutineExtras(config){
+  const out={};
+  if(Object.hasOwn(config,'subs')){
+    if(!Array.isArray(config.subs)||config.subs.length>5||!config.subs.every(id=>typeof id==='string'&&id.length>0&&id.length<=100))throw new PlanError('Unsupported stored substitutes', 'unsupported');
+    out.subs=[...config.subs];
+  }
+  for(const key of ['warmupRestSec','sideRestSec'])if(Object.hasOwn(config,key)){
+    if(typeof config[key]!=='number'||!Number.isFinite(config[key])||config[key]<0)throw new PlanError('Unsupported stored rest configuration', 'unsupported');
+    out[key]=config[key];
+  }
+  if(Object.hasOwn(config,'warmupRestOff')){if(typeof config.warmupRestOff!=='boolean')throw new PlanError('Unsupported stored warmupRestOff', 'unsupported');out.warmupRestOff=config.warmupRestOff;}
+  return out;
+}
 export function publicEntry(entry, index, state, catalogue) {
   if (typeof entry.id !== 'string') throw new PlanError('Unsupported exercise identity', 'unsupported');
   const target = Object.fromEntries(Object.entries(entry.target || {}).filter(([key, value]) =>
     ['id', 'mode', 'side', 'sets', 'reps', 'sec', 'min', 'speed', 'weight', 'dbLoad', 'bodyweight', 'restSec'].includes(key)
     && ['string', 'number', 'boolean'].includes(typeof value)));
+  Object.assign(target,publicRoutineExtras(entry.target||{}));
   return { exercise_index: index, exercise_id: entry.id, exercise_name: exerciseName(state, catalogue, entry), target,
     weight_basis: basisOf(entry), note: typeof entry.note === 'string' ? entry.note : null,
     sets: (entry.sets || []).map(row => publicSet(row, entry)) };

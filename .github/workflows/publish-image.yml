@@ -51,7 +51,7 @@ jobs:
           import { readFileSync } from 'node:fs';
           const output = readFileSync('test-results.tap', 'utf8');
           const count = output.match(/^# tests (\d+)$/m);
-          if (!count || Number(count[1]) < 96) throw new Error('Original regression suite must remain present');
+          if (!count || Number(count[1]) < 155) throw new Error('All v0.4.0 regression tests must remain present');
           console.log(`Executed ${count[1]} tests`);
           JS
 
@@ -59,6 +59,14 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        official:
+          - version: '1.4.2'
+            commit: e9a303877d02e4237b183f96a9a6603990e8fafb
+          - version: '1.4.1'
+            commit: 464355ef43d4c8f8a4e0bb6db9c2af7f240593b5
     permissions:
       contents: read
     steps:
@@ -70,7 +78,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: DuarteSantos8/openGym
-          ref: 464355ef43d4c8f8a4e0bb6db9c2af7f240593b5 # v1.4.1
+          ref: ${{ matrix.official.commit }}
           path: upstream-compatibility
           persist-credentials: false
       - name: Set up Node.js
@@ -84,7 +92,7 @@ jobs:
         working-directory: upstream-compatibility/frontend
         run: npm ci --ignore-scripts
       - name: Run isolated official API and frontend sync acceptance
-        run: node scripts/acceptance-official.mjs upstream-compatibility
+        run: node scripts/acceptance-official.mjs upstream-compatibility --official-version=${{ matrix.official.version }}
 
   build:
     needs: [test, official-compatibility]

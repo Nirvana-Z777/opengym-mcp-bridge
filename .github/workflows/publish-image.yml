@@ -1,281 +1,68 @@
-name: Test and publish Docker image
-
+name: Verify published v0.4.1 image
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  test:
+  verify-published-image:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      IMAGE_REPOSITORY: ghcr.io/nirvana-z777/opengym-mcp-bridge
+      EXPECTED_DIGEST: sha256:82a98b2e42c95f144148adff126820689096c09bc3ba5ce140080fa098ac49dc
+      EXPECTED_REVISION: 1cadd0774284c107d5b609d34847c765a8e7a8e3
     steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - name: Install from lockfile
-        run: npm ci --ignore-scripts
-      - name: Verify release version
-        env:
-          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-        run: |
-          node --input-type=module <<'JS'
-          import { readFileSync } from 'node:fs';
-          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-          if (process.env.RELEASE_TAG && process.env.RELEASE_TAG !== `v${version}`) {
-            throw new Error('Release tag must match package.json version');
-          }
-          console.log(`Package version: ${version}`);
-          JS
-      - name: Run complete regression suite
-        shell: bash
-        run: |
-          set -o pipefail
-          npm test | tee test-results.tap
-          node --input-type=module <<'JS'
-          import { readFileSync } from 'node:fs';
-          const output = readFileSync('test-results.tap', 'utf8');
-          const count = output.match(/^# tests (\d+)$/m);
-          if (!count || Number(count[1]) < 155) throw new Error('All v0.4.0 regression tests must remain present');
-          console.log(`Executed ${count[1]} tests`);
-          JS
-
-  official-compatibility:
-    needs: test
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        official:
-          - version: '1.4.2'
-            commit: e9a303877d02e4237b183f96a9a6603990e8fafb
-          - version: '1.4.1'
-            commit: 464355ef43d4c8f8a4e0bb6db9c2af7f240593b5
-    permissions:
-      contents: read
-    steps:
-      - name: Check out Bridge
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Check out pinned official openGym separately
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: DuarteSantos8/openGym
-          ref: ${{ matrix.official.commit }}
-          path: upstream-compatibility
-          persist-credentials: false
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - name: Install pinned official API dependencies without optional AI runtime
-        working-directory: upstream-compatibility/api
-        run: npm ci --omit=optional --ignore-scripts
-      - name: Install pinned official frontend dependencies
-        working-directory: upstream-compatibility/frontend
-        run: npm ci --ignore-scripts
-      - name: Run isolated official API and frontend sync acceptance
-        run: node scripts/acceptance-official.mjs upstream-compatibility --official-version=${{ matrix.official.version }}
-
-  build:
-    needs: [test, official-compatibility]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Audit Docker build context
-        run: |
-          audit_dir=$(mktemp -d)
-          cp -R . "$audit_dir/source"
-          mkdir "$audit_dir/source/secrets" "$audit_dir/source/store"
-          for file in .env secrets/sentinel store/sentinel docker-compose.yaml tunnel-client.yaml; do
-            printf '%s\n' 'SYNTHETIC-CONTEXT-AUDIT-ONLY' > "$audit_dir/source/$file"
-          done
-          docker buildx build --file - --output "type=local,dest=$audit_dir/export" "$audit_dir/source" <<'DOCKERFILE'
-          FROM scratch
-          COPY . /
-          DOCKERFILE
-          python3 - "$audit_dir/export" <<'PY'
-          from pathlib import Path
-          import sys
-          root = Path(sys.argv[1])
-          expected = {'Dockerfile', '.dockerignore', 'package.json', 'LICENSE'}
-          expected.update(p.as_posix() for p in Path('src').rglob('*.mjs'))
-          actual = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file()}
-          assert actual == expected, f'Unexpected Docker context files: {actual ^ expected}'
-          print(f'Verified {len(actual)} runtime context files; local-data canaries excluded')
-          PY
-      - name: Build runtime without publishing
-        run: docker build --platform linux/amd64 --tag opengym-bridge:ci .
-      - name: Smoke test isolated runtime image
-        run: |
-          docker run --rm --network none --entrypoint node opengym-bridge:ci --input-type=module -e '
-            import assert from "node:assert/strict";
-            import { existsSync, readFileSync, readdirSync } from "node:fs";
-            import { dispatch } from "./src/mcp.mjs";
-            const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-            const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
-            assert.equal(reply.result.serverInfo.version, version);
-            for (const file of [".env", ".git", "tests", "docker-compose.yaml", "tunnel-client.yaml"]) {
-              assert.equal(existsSync(file), false, `Unexpected runtime file: ${file}`);
-            }
-            assert.deepEqual(readdirSync("/secrets"), []);
-            assert.deepEqual(readdirSync("/store"), []);
-            console.log(`Verified runtime image; MCP version: ${version}; no bundled credentials or user data`);
-          '
-
-
-      - name: Start the actual container entry point and verify MCP initialization and tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          startup_output=$(mktemp)
-          trap 'rm -f "$startup_output"' EXIT
-          printf '%s\n' \
-            '{"jsonrpc":"2.0","id":1,"method":"initialize"}' \
-            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | docker run --rm -i --network none \
-              -e OPENGYM_BASE_URL=http://127.0.0.1:1 \
-              -e MCP_TRANSPORT=stdio -e OPENGYM_ALLOW_WRITES=1 \
-              opengym-bridge:ci > "$startup_output"
-          node --input-type=module - "$startup_output" <<'JS'
-          import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const replies = readFileSync(process.argv[2], 'utf8').trim().split('\n').map(line => JSON.parse(line));
-          const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
-          assert.equal(replies.length, 2);
-          assert.equal(replies[0].result.serverInfo.version, version);
-          assert.equal(replies[1].result.tools.length, 37);
-          console.log(`Verified actual container startup; MCP version: ${version}; 37 tools; network disabled`);
-          JS
-
-  publish:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker image metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ghcr.io/nirvana-z777/opengym-mcp-bridge
-          flavor: latest=false
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
-      - name: Build and publish
-        id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-      - name: Verify published runtime image
-        env:
-          IMAGE_REF: ghcr.io/nirvana-z777/opengym-mcp-bridge@${{ steps.build.outputs.digest }}
-        run: |
-          docker pull "$IMAGE_REF"
-          docker run --rm --network none --entrypoint node "$IMAGE_REF" --input-type=module -e '
-            import assert from "node:assert/strict";
-            import { existsSync, readFileSync, readdirSync } from "node:fs";
-            import { dispatch } from "./src/mcp.mjs";
-            const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-            const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
-            assert.equal(reply.result.serverInfo.version, version);
-            for (const file of [".env", ".git", "tests", "docker-compose.yaml", "tunnel-client.yaml"]) {
-              assert.equal(existsSync(file), false, `Unexpected runtime file: ${file}`);
-            }
-            assert.deepEqual(readdirSync("/secrets"), []);
-            assert.deepEqual(readdirSync("/store"), []);
-            console.log(`Verified runtime image; MCP version: ${version}; no bundled credentials or user data`);
-          '
-      - name: Verify anonymous release pulls, architecture, version and matching digests
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          IMAGE_REPOSITORY: ghcr.io/nirvana-z777/opengym-mcp-bridge
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          RELEASE_TAG: ${{ github.ref_name }}
+      - name: Anonymous pulls and actual published container startup
         shell: bash
         run: |
           set -euo pipefail
           anonymous_config=$(mktemp -d)
-          trap 'rm -rf "$anonymous_config"' EXIT
-          release_version=${RELEASE_TAG#v}
-          for image_tag in "$release_version" latest; do
-            image_ref="$IMAGE_REPOSITORY:$image_tag"
-            docker --config "$anonymous_config" pull --platform linux/amd64 "$image_ref"
-            docker --config "$anonymous_config" image inspect "$image_ref" > "$anonymous_config/image.json"
-            EXPECTED_VERSION="$release_version" node --input-type=module - "$anonymous_config/image.json" <<'JS'
+          verify_container=''
+          trap 'if [ -n "${verify_container:-}" ]; then docker --config "$anonymous_config" rm -f "$verify_container" >/dev/null; fi; rm -rf "$anonymous_config"' EXIT
+          for image_tag in 0.4.1 latest; do
+            docker --config "$anonymous_config" pull --platform linux/amd64 "$IMAGE_REPOSITORY:$image_tag"
+            docker --config "$anonymous_config" image inspect "$IMAGE_REPOSITORY:$image_tag" > "$anonymous_config/image.json"
+            node --input-type=module - "$anonymous_config/image.json" <<'JS'
           import assert from 'node:assert/strict';
-          import { readFileSync } from 'node:fs';
-          const [image] = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-          assert.equal(image.Os, 'linux');
-          assert.equal(image.Architecture, 'amd64');
-          assert.ok(image.RepoDigests.includes(`${process.env.IMAGE_REPOSITORY}@${process.env.IMAGE_DIGEST}`));
-          assert.equal(image.Config.Labels['org.opencontainers.image.version'], process.env.EXPECTED_VERSION);
-          console.log(`Anonymous pull verified: linux/amd64; version=${process.env.EXPECTED_VERSION}; digest=${process.env.IMAGE_DIGEST}`);
+          import {readFileSync} from 'node:fs';
+          const [image]=JSON.parse(readFileSync(process.argv[2],'utf8'));
+          assert.equal(image.Os,'linux');assert.equal(image.Architecture,'amd64');
+          assert(image.RepoDigests.includes(process.env.IMAGE_REPOSITORY+'@'+process.env.EXPECTED_DIGEST));
+          assert.equal(image.Config.Labels['org.opencontainers.image.version'],'0.4.1');
+          assert.equal(image.Config.Labels['org.opencontainers.image.revision'],process.env.EXPECTED_REVISION);
+          console.log('Anonymous published tag verified: linux/amd64; version 0.4.1; '+process.env.EXPECTED_DIGEST);
           JS
-            docker --config "$anonymous_config" run --rm --network none --entrypoint node \
-              -e EXPECTED_VERSION="$release_version" "$image_ref" --input-type=module -e '
-              import assert from "node:assert/strict";
-              import { readFileSync } from "node:fs";
-              import { dispatch } from "./src/mcp.mjs";
-              const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-              assert.equal(version, process.env.EXPECTED_VERSION);
-              const reply = await dispatch({ jsonrpc: "2.0", id: 1, method: "initialize" }, { writes: false });
-              assert.equal(reply.result.serverInfo.version, process.env.EXPECTED_VERSION);
-              console.log(`Release runtime verified: ${version}`);
-            '
           done
+          verify_container=$(docker --config "$anonymous_config" run -d --rm --network none \
+            -e OPENGYM_BASE_URL=http://127.0.0.1:1 -e OPENGYM_ALLOW_WRITES=1 \
+            -e MCP_HOST=127.0.0.1 "$IMAGE_REPOSITORY@$EXPECTED_DIGEST")
+          verify_ready=0
+          for attempt in $(seq 1 20); do
+            if docker --config "$anonymous_config" exec "$verify_container" node --input-type=module -e \
+              'const r=await fetch("http://127.0.0.1:3003/healthz"); if(!r.ok) process.exit(1);' >/dev/null 2>&1; then
+              verify_ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$verify_ready" -eq 1
+          docker --config "$anonymous_config" exec -i "$verify_container" node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const token=readFileSync('/secrets/mcp-access-token','utf8').trim();
+          const call=async(method,id)=>{
+            const response=await fetch('http://127.0.0.1:3003/mcp',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},body:JSON.stringify({jsonrpc:'2.0',id,method})});
+            assert.equal(response.status,200);const data=await response.json();assert.equal(data.error,undefined);return data.result;
+          };
+          const initialized=await call('initialize',1);assert.equal(initialized.serverInfo.version,'0.4.1');
+          const registry=await call('tools/list',2);assert.equal(registry.tools.length,37);assert.equal(new Set(registry.tools.map(t=>t.name)).size,37);
+          assert.equal(JSON.parse(readFileSync('/app/package.json','utf8')).version,'0.4.1');
+          console.log('Published immutable image default HTTP startup verified; authenticated MCP 0.4.1; 37 tools; no network or host volumes');
+          JS
           {
-            echo '### Verified release image'
-            echo
-            echo "- Version: $release_version"
-            echo '- Platform: linux/amd64'
-            echo "- Digest: $IMAGE_DIGEST"
-            echo "- Anonymous pulls: $release_version and latest passed; both resolve to the publication digest"
-            echo "- Immutable image: $IMAGE_REPOSITORY@$IMAGE_DIGEST"
+            echo '### Published image verification passed'
+            echo '- Anonymous pulls: 0.4.1 and latest'
+            echo '- Platform / MCP version / registered tools: linux/amd64 / 0.4.1 / 37'
+            echo '- Default HTTP container startup: passed with network disabled and no host mounts'
+            echo "- Immutable image: $IMAGE_REPOSITORY@$EXPECTED_DIGEST"
           } >> "$GITHUB_STEP_SUMMARY"

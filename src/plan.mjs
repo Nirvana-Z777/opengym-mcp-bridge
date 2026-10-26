@@ -9,7 +9,7 @@ import { listCustom, changeCustomExercises } from './custom-exercises.mjs';
 import { listWorkouts, getWorkout, exerciseHistory } from './workout-query.mjs';
 import { editWorkout } from './workout-edit.mjs';
 import { insertHistory, updateHistoryStatistics } from './workout-stats.mjs';
-import { publicSet } from './workout-data.mjs';
+import { publicSet,publicRoutineExtras } from './workout-data.mjs';
 const clone = v => structuredClone(v);
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
 const nameOf = r => String(r?.name || r?.id || '未知训练');
@@ -42,7 +42,7 @@ export function publicPlan(state, names={}) {
       id: r.id, name: nameOf(r),
       exercises: (Array.isArray(r.ex) ? r.ex : []).slice(0, 60).map((x, index) => ({
         exercise_index: index, exercise_id: x.id, exercise_name: exerciseName(state,names,x.id), sets: x.sets, reps: x.reps,
-        weight: x.weight, ...(x.restSec === undefined ? {} : { rest_sec: x.restSec }),
+        weight: x.weight, ...(x.restSec === undefined ? {} : { rest_sec: x.restSec }),...publicRoutineExtras(x),
       })),
     })),
     week: obj(state.week) ? state.week : {},

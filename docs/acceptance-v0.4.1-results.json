@@ -1,0 +1,381 @@
+{
+  "date": "2026-10-26",
+  "baseline": "63416eb402235352844a6d920d76d3fcdaff9d7e",
+  "regression": {
+    "tests": 209,
+    "passed": 209,
+    "failed": 0,
+    "skipped": 0
+  },
+  "runs": [
+    {
+      "upstream": {
+        "version": "1.4.2",
+        "commit": "e9a303877d02e4237b183f96a9a6603990e8fafb"
+      },
+      "bridge_commit": "8790b7e84e00c1ff134a4a6153de746fe0faa035",
+      "bridge_version": "0.4.1",
+      "node": "v24.22.1",
+      "checks": [
+        {
+          "name": "complete official catalogue weight parity and immutable text metadata import",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "isolated account registration and official one-time pairing",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "paired bearer renewal, stable identity, cookie replay restrictions and rejection of invalid tokens",
+          "passed": true,
+          "bridge_puts": 2
+        },
+        {
+          "name": "A/B/C creation: preview, explicit confirmation, one PUT, backup and reread",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "existing plan rename, add, reorder, replace, target edit and remove exercise",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "real concurrent official write invalidates preview without PUT or retry",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "mandatory backup filesystem failure refuses the write before network submission",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "real official HTTP 409 after final preflight is consumed once without retry",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft A: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft B: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft C: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "draft correction invalidates an older finish preview; cancellation stays local",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "real server accepted write with dropped response: restart, read-only recovery, no second PUT",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "official history helpers and native deletion/Undo merge agree with bridge statistics",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "official routine delete and Undo keep existing linked workouts and reject missing plan",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "body weight and feedback persist locally without an official API write",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "substitutes, warmup/side rests, bar defaults and progress photo references survive actual guarded writes",
+          "passed": true,
+          "bridge_puts": 2
+        },
+        {
+          "name": "official dayPhotos per-key merge retains independent refs and newer clear tombstones",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "official frontend store synchronizes real API data and preserves Bridge history through delete/Undo",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "all 15 corrected rowing IDs exclude chest/triceps effective load; explicit historical weights still win",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "all 37 original MCP tools accept valid calls, including custom exercises and guarded historical logging/editing",
+          "passed": true,
+          "bridge_puts": 3
+        }
+      ],
+      "catalogue": {
+        "count": 5632,
+        "translated": 5632,
+        "source_version": "1.4.2",
+        "source_commit": "e9a303877d02e4237b183f96a9a6603990e8fafb",
+        "weight_parity_compared": 5632
+      },
+      "frontend": {
+        "environment": "happy-dom, real api/useStore/sync modules and HTTP",
+        "passed": 1,
+        "browser_ui_verified": false
+      },
+      "corrected_rows": {
+        "ids": [
+          "0167",
+          "0193",
+          "0208",
+          "0236",
+          "0239",
+          "0571",
+          "0588",
+          "1313",
+          "1318",
+          "1320",
+          "1321",
+          "1323",
+          "1324",
+          "1350",
+          "3200"
+        ],
+        "working_rows": 30,
+        "chest_effective_sets": 0,
+        "triceps_effective_sets": 0,
+        "historical_explicit_weights_preserved": true
+      },
+      "tools": {
+        "registered": 37,
+        "successfully_called": 37,
+        "names": [
+          "abandon_workout_draft",
+          "apply_custom_exercise_change",
+          "apply_plan_change",
+          "apply_workout_edit",
+          "commit_finished_workout_draft",
+          "draft_add_exercise",
+          "draft_add_set",
+          "draft_remove_exercise",
+          "draft_remove_set",
+          "draft_set_note",
+          "draft_set_routine",
+          "draft_update_set",
+          "fetch",
+          "get_exercise_history",
+          "get_plan",
+          "get_recent_workouts",
+          "get_status",
+          "get_summary",
+          "get_weekly_training_summary",
+          "get_workout",
+          "get_workout_draft",
+          "get_workout_progress",
+          "list_body_feedback",
+          "list_custom_exercises",
+          "list_workout_drafts",
+          "list_workouts",
+          "log_workout",
+          "preview_custom_exercise_change",
+          "preview_finish_workout_draft",
+          "preview_plan_change",
+          "preview_workout_edit",
+          "preview_workout_log",
+          "record_body_feedback",
+          "recover_workout_draft",
+          "search",
+          "search_exercises",
+          "start_workout_draft"
+        ]
+      },
+      "passed": true,
+      "finished_at": "2026-10-26T12:34:12.094Z",
+      "request_summary": {
+        "total": 242,
+        "bridge_puts": 14,
+        "expected_409": 3
+      }
+    },
+    {
+      "upstream": {
+        "version": "1.4.1",
+        "commit": "464355ef43d4c8f8a4e0bb6db9c2af7f240593b5"
+      },
+      "bridge_commit": "8790b7e84e00c1ff134a4a6153de746fe0faa035",
+      "bridge_version": "0.4.1",
+      "node": "v24.22.1",
+      "checks": [
+        {
+          "name": "complete official catalogue weight parity and immutable text metadata import",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "isolated account registration and official one-time pairing",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "paired bearer renewal, stable identity, cookie replay restrictions and rejection of invalid tokens",
+          "passed": true,
+          "bridge_puts": 2
+        },
+        {
+          "name": "A/B/C creation: preview, explicit confirmation, one PUT, backup and reread",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "existing plan rename, add, reorder, replace, target edit and remove exercise",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "real concurrent official write invalidates preview without PUT or retry",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "mandatory backup filesystem failure refuses the write before network submission",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "real official HTTP 409 after final preflight is consumed once without retry",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft A: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft B: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "linked draft C: persistence, actual sets, approval, single commit and duplicate refusal",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "draft correction invalidates an older finish preview; cancellation stays local",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "real server accepted write with dropped response: restart, read-only recovery, no second PUT",
+          "passed": true,
+          "bridge_puts": 1
+        },
+        {
+          "name": "official history helpers and native deletion/Undo merge agree with bridge statistics",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "official routine delete and Undo keep existing linked workouts and reject missing plan",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "body weight and feedback persist locally without an official API write",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "substitutes, warmup/side rests, bar defaults and progress photo references survive actual guarded writes",
+          "passed": true,
+          "bridge_puts": 2
+        },
+        {
+          "name": "official frontend store synchronizes real API data and preserves Bridge history through delete/Undo",
+          "passed": true,
+          "bridge_puts": 0
+        },
+        {
+          "name": "all 37 original MCP tools accept valid calls, including custom exercises and guarded historical logging/editing",
+          "passed": true,
+          "bridge_puts": 3
+        }
+      ],
+      "catalogue": {
+        "count": 5632,
+        "translated": 5632,
+        "source_version": "1.4.1",
+        "source_commit": "464355ef43d4c8f8a4e0bb6db9c2af7f240593b5",
+        "weight_parity_compared": 5632
+      },
+      "frontend": {
+        "environment": "happy-dom, real api/useStore/sync modules and HTTP",
+        "passed": 1,
+        "browser_ui_verified": false
+      },
+      "tools": {
+        "registered": 37,
+        "successfully_called": 37,
+        "names": [
+          "abandon_workout_draft",
+          "apply_custom_exercise_change",
+          "apply_plan_change",
+          "apply_workout_edit",
+          "commit_finished_workout_draft",
+          "draft_add_exercise",
+          "draft_add_set",
+          "draft_remove_exercise",
+          "draft_remove_set",
+          "draft_set_note",
+          "draft_set_routine",
+          "draft_update_set",
+          "fetch",
+          "get_exercise_history",
+          "get_plan",
+          "get_recent_workouts",
+          "get_status",
+          "get_summary",
+          "get_weekly_training_summary",
+          "get_workout",
+          "get_workout_draft",
+          "get_workout_progress",
+          "list_body_feedback",
+          "list_custom_exercises",
+          "list_workout_drafts",
+          "list_workouts",
+          "log_workout",
+          "preview_custom_exercise_change",
+          "preview_finish_workout_draft",
+          "preview_plan_change",
+          "preview_workout_edit",
+          "preview_workout_log",
+          "record_body_feedback",
+          "recover_workout_draft",
+          "search",
+          "search_exercises",
+          "start_workout_draft"
+        ]
+      },
+      "passed": true,
+      "finished_at": "2026-10-26T12:34:11.894Z",
+      "request_summary": {
+        "total": 238,
+        "bridge_puts": 14,
+        "expected_409": 3
+      }
+    }
+  ]
+}

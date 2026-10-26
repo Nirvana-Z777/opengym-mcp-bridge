@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.1 — development, unreleased
+
+- Pin text catalogue import to official openGym v1.4.2 commit `e9a303877d02e4237b183f96a9a6603990e8fafb`, verify all three source file digests, merge the independent muscle map and retain explicit zero weights and Chinese names. Fetch/schema/integrity failures preserve the existing catalogue; legacy readers remain compatible.
+- Add `effective_sets`, muscle-weight source accounting and catalogue provenance to weekly analysis without removing legacy credit/volume/trend fields. Explicit valid historical snapshot weights win; missing weights use current official/custom metadata and documented defaults. Never rewrite history for a statistics refresh.
+- Read optional substitutes and warmup/side rest settings in plans/saved targets; preserve root bar defaults and progress photo references. Refuse different-exercise replacement when exercise-specific settings cannot safely migrate.
+- Retain all 37 tools and the existing auth, preview/confirmation, backup, revision/write-ID checks, single CAS PUT, reread and uncertain-write recovery implementations. Add pinned v1.4.2/v1.4.1 real-API/frontend compatibility CI, full-catalogue weight parity and successful calls to all tools.
+- Update development metadata to 0.4.1. No tag, Release, production image publication, data migration, NAS or Tunnel change is part of this PR. See [compatibility semantics and test results](docs/v0.4.1.md).
+
 ## v0.4.0 — 2026-10-21 (skip v0.3.3)
 
 - Edit existing routine names, exercises/order and training targets through guarded plan previews.

@@ -40,6 +40,7 @@ export function editWorkout(original, input, catalogue) {
         workout.entries.splice(index, 0, added); metricsChanged = true; break;
       }
       case 'replace_exercise': {
+        if(action.exercise.exercise_id!==entry.id&&['subs','warmupRestSec','warmupRestOff','sideRestSec'].some(k=>Object.hasOwn(entry.target||{},k)))throw new PlanError('动作替换包含专属替代/休息配置，无法安全迁移；请在原 App 核对', 'unsupported');
         const replacement = normalizeEntry(action.exercise, { state, catalogue });
         if (replacement.id === entry.id) replacement.sets = replacement.sets.map((row,index)=>{
           const previous=entry.sets[index];

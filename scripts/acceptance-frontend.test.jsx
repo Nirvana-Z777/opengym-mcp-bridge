@@ -29,6 +29,8 @@ it('official web store pulls Bridge data, edits a plan, deletes and undoes a wor
   expect(state.workouts).toHaveLength(4);
   expect(requests.filter(r => r.method === 'PUT')).toHaveLength(0);
   expect(state.workouts.map(w => w.id).sort()).toEqual(before.state.workouts.map(w => w.id).sort());
+  expect(state.barDefaults).toEqual(before.state.barDefaults);expect(state.dayPhotos).toEqual(before.state.dayPhotos);
+  for(const key of ['subs','warmupRestSec','warmupRestOff','sideRestSec'])expect(state.routines[1].ex[0][key]).toEqual(before.state.routines[1].ex[0][key]);
   for (const label of ['A', 'B', 'C']) {
     const w = state.workouts.find(w => w.name === 'Synthetic workout ' + label);
     expect(entryRoutineId(w, w.entries[0])).toBe(before.state.routines.find(r => r.name.includes('Synthetic ' + label)).id);
@@ -50,4 +52,5 @@ it('official web store pulls Bridge data, edits a plan, deletes and undoes a wor
   expect(restored.deleted.workouts[w.id]).toBeLessThan(0);
   expect(restored.routines[0].name).toBe('Synthetic A web sync');
   expect(restored.syntheticExtension).toEqual({ preserve: true });
+  expect(restored.barDefaults).toEqual(before.state.barDefaults);expect(restored.dayPhotos).toEqual(before.state.dayPhotos);
 }, 30000);

@@ -25,6 +25,19 @@ it('official web store pulls Bridge data, edits a plan, deletes and undoes a wor
   const before = await api('/api/data');
   await useStore.getState().pullState();
   const state = useStore.getState().S;
+  if(process.env.ACCEPTANCE_WORKOUT_ID){
+    const saved=state.workouts.find(workout=>workout.id===process.env.ACCEPTANCE_WORKOUT_ID);
+    expect(saved).toBeDefined();
+    expect(saved.entries[1].sets[0].sec).toBe(23);
+    expect(saved.entries[1].planned.sec).toBe(25);
+    expect(saved.bridgeSession.report.completion_rate).toBe(1);
+    const day=saved.d;
+    expect(state.bodyweight.find(row=>row.d===day).ins).toHaveLength(2);
+    expect(state.bodyweight.find(row=>row.d===day).w).toBe(61);
+    expect(state.measurements.find(row=>row.d===day).waist).toBe(76.2);
+    expect(requests.filter(r=>r.method==='PUT')).toHaveLength(0);
+    return;
+  }
   expect(state.routines).toHaveLength(3);
   expect(state.workouts).toHaveLength(4);
   expect(requests.filter(r => r.method === 'PUT')).toHaveLength(0);

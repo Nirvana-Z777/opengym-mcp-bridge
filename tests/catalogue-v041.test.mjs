@@ -13,19 +13,19 @@ const chinese={s1:{name:'虚构动作'}};
 const responses=()=>({'frontend/src/lib/exercises-data.js':'export const EXDB='+JSON.stringify(rows())+';',
  'frontend/src/lib/exercise-muscle-map.json':JSON.stringify(overlay()),'catalogue/i18n/zh.json':JSON.stringify(chinese)});
 const fixtureDigests=source=>Object.fromEntries(Object.entries(source).map(([key,value])=>[key,createHash('sha256').update(value).digest('hex')]));
-test('Importer pins an immutable v1.4.2 commit, merges zero weights and excludes media',async t=>{
+test('Importer pins an immutable v1.4.5 commit, merges zero weights and excludes media',async t=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'bridge-catalogue-041-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  const file=path.join(dir,'catalogue.json'),calls=[],source=responses();
  const result=await importCatalogue(file,{digests:fixtureDigests(source),fetchImpl:async url=>{
   const root=`https://raw.githubusercontent.com/DuarteSantos8/openGym/${CATALOGUE_SOURCE.commit}/`;assert(url.startsWith(root));
   calls.push(url.slice(root.length));return new Response(source[url.slice(root.length)],{status:200});
  }});
- assert.deepEqual(calls,Object.keys(source));assert.equal(result.source_version,'1.4.2');
+ assert.deepEqual(calls,Object.keys(source));assert.equal(result.source_version,'1.4.5');
  const saved=JSON.parse(await fs.readFile(file));assert.equal(saved.format,3);assert.equal(saved.source_commit,CATALOGUE_SOURCE.commit);
  assert.equal(saved.names.s1,'虚构动作');assert.equal(saved.exercises.s1.muscleWeights.chest,0);assert.equal(saved.exercises.s1.muscleWeights.triceps,0);
  assert.deepEqual(saved.exercises.s1.primaries,['upper-back']);assert.equal(saved.exercises.s1.media,undefined);
  assert.equal((await fs.stat(file)).mode&0o777,0o600);
- assert.equal((await loadExerciseCatalogue(file)).source_version,'1.4.2');
+ assert.equal((await loadExerciseCatalogue(file)).source_version,'1.4.5');
 });
 for(const [name,change] of [
  ['duplicate IDs',d=>d.push({...d[0]})],['missing name',d=>delete d[0].n],['invalid array',(_d,m)=>m.s1.primaries='chest'],

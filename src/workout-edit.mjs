@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { PlanError } from './errors.mjs';
 import { only, text, integer, boundedOutput, object } from './validate.mjs';
 import { findWorkout, publicWorkout } from './workout-query.mjs';
-import { normalizeEntry, normalizeSet, patchSet, hasSides, assertCompletedEntry, assertUnambiguousWeightLayout } from './workout-data.mjs';
+import { modeOf, normalizeEntry, normalizeSet, patchSet, hasSides, assertCompletedEntry, assertUnambiguousWeightLayout } from './workout-data.mjs';
 import { refreshWorkout, updateHistoryStatistics } from './workout-stats.mjs';
 
 const KEYS = {
@@ -26,6 +26,10 @@ export function editWorkout(original, input, catalogue) {
     if (['set_date', 'set_time', 'set_duration', 'move_date'].includes(action.type)) throw new PlanError('本版不修改训练日期、开始时间或时长；需要单独验证时区、排序和旧记录身份迁移，请使用原 App', 'unsupported');
     if (!Object.hasOwn(KEYS, action.type)) throw new PlanError('Unsupported workout edit action');
     only(action, KEYS[action.type], 'workout action');
+    const metadataOnly=['set_note','set_name','set_exercise_note'].includes(action.type);
+    const specialSet = s => modeOf(s)==='distance'||s.bands?.length||s.sides?.L?.bands?.length||s.sides?.R?.bands?.length;
+    if(!metadataOnly&&(workout.circuits?.length||workout.entries.some(e=>e.target?.mode==='distance'||e.target?.bands?.length||e.sets?.some(specialSet))))
+      throw new PlanError('Distance, resistance bands, or circuit scores require editing results in openGym', 'unsupported');
     const structural = ['add_exercise', 'replace_exercise', 'remove_exercise', 'move_exercise'].includes(action.type);
     if (structural && workout.entries.some(e => e.sg)) throw new PlanError('含超级组的结构调整需在原 App 完成；备注和普通训练组仍可单独编辑', 'unsupported');
     let entry;

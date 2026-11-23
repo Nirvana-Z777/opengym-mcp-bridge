@@ -7,12 +7,12 @@ import {createHash} from 'node:crypto';
 import { configFromEnv } from './config.mjs';
 import { writeCredential } from './openGym.mjs';
 
-export const CATALOGUE_SOURCE=Object.freeze({version:'1.4.2',commit:'e9a303877d02e4237b183f96a9a6603990e8fafb',repository:'DuarteSantos8/openGym'});
+export const CATALOGUE_SOURCE=Object.freeze({version:'1.4.5',commit:'2d70e026effc6602f513555166a97443520f0572',repository:'DuarteSantos8/openGym'});
 const ROOT=`https://raw.githubusercontent.com/${CATALOGUE_SOURCE.repository}/${CATALOGUE_SOURCE.commit}/`;
 export const CATALOGUE_DIGESTS=Object.freeze({
- 'frontend/src/lib/exercises-data.js':'c95191c9fc41ed5937d5bf0d8a25c0ccb5cd5ab8519f32cb6e283c4f6e5bfb10',
- 'frontend/src/lib/exercise-muscle-map.json':'568e83b15b0a30d07843720a49389e206d0e1436711865f27eb63192ab580fb9',
- 'catalogue/i18n/zh.json':'4d04d1a2f55affc0ad8da460a2a94eeac73177310d08d86317920df0e8fd476f',
+ 'frontend/src/lib/exercises-data.js':'efa0e25bb01de0834153abeec2b9c78d02e87977f0c6edf3ec07f7c08cc36fe1',
+ 'frontend/src/lib/exercise-muscle-map.json':'5c07841ed49dc4d216913181a5103b5afe4fc864fdbbdbae34e51f7692497514',
+ 'catalogue/i18n/zh.json':'a158b85d332aee1bd0ea10bdaefe09c91b057e52d502814f95e8c2d443d024f7',
 });
 const map=v=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const label=v=>typeof v==='string'&&v.length>0&&v.length<=300&&!/[\u0000-\u001f]/.test(v);
@@ -51,6 +51,12 @@ export function buildCatalogue(data,muscleMap,translations,source=CATALOGUE_SOUR
     if(!map(row)||!label(row.id)||row.id.length>100||!label(row.n)||Object.hasOwn(names,row.id))fail('动作 ID/名称重复或无效');
     safeSet(names,row.id,row.n);safeSet(exercises,row.id,metadata(row));
   }
+  if(source.version==='1.4.5'){
+    for(const row of Object.values(exercises))row.mv=2;
+    // Public v1.4.5 catalogue corrections documented by upstream issue #693.
+    for(const id of ['4133','10189'])if(Object.hasOwn(exercises,id))
+      exercises[id].sm=[...new Set([...(exercises[id].sm??[]),'lower back'])];
+  }
   for(const [id,overlay] of Object.entries(muscleMap)){
     if(!Object.hasOwn(exercises,id)||!map(overlay)||!Object.keys(overlay).length)fail('肌群映射目标无效 '+id);
     if(Object.keys(overlay).some(k=>!['bp','primaries','secondaries','muscleWeights'].includes(k)))fail('未知肌群映射字段');
@@ -72,8 +78,21 @@ export function extractCatalogueArray(text){
   const anchor='export const EXDB=';
   const at=text.indexOf(anchor);
   if(at<0)throw new Error('找不到 EXDB，官方文件格式可能已变化');
-  const start=text.indexOf('[',at+anchor.length);
-  if(start<0)throw new Error('找不到 EXDB 的起始方括号');
+  const rhs=text.slice(at+anchor.length).trimStart();
+  if(rhs.startsWith('JSON.parse(')){
+    // Decode only the single-quoted data literal used by the upstream generator.
+    const match=/^JSON\.parse\('((?:[^'\\]|\\[\s\S])*)'\)\s*;?/.exec(rhs);
+    if(!match)fail('EXDB wrapper must contain a single data literal');
+    const decoded=match[1].replace(/\\([\s\S])/g,(_,escape)=>{
+      if(escape==="'"||escape==='\\')return escape;
+      fail('Unexpected escape in EXDB wrapper');
+    });
+    const data=JSON.parse(decoded);
+    if(!Array.isArray(data)||data.length<1000)fail('EXDB content count');
+    return data;
+  }
+  if(!rhs.startsWith('['))fail('Expected EXDB JSON array');
+  const start=text.length-rhs.length;
   let depth=0,quoted=false,escaped=false;
   for(let i=start;i<text.length;i++){
     const ch=text[i];
@@ -110,7 +129,7 @@ export async function loadExerciseCatalogue(file){
 }
 
 // digests is dependency injection for synthetic unit fixtures; the CLI always uses the pins.
-export async function importCatalogue(file,{fetchImpl=globalThis.fetch,digests=CATALOGUE_DIGESTS}={}){
+export async function fetchCatalogue({fetchImpl=globalThis.fetch,digests=CATALOGUE_DIGESTS}={}){
   const read=async name=>{
     const res=await fetchImpl(ROOT+name,{signal:AbortSignal.timeout(60000)});
     if(!res.ok)throw new Error(`${name}: HTTP ${res.status}`);
@@ -123,6 +142,11 @@ export async function importCatalogue(file,{fetchImpl=globalThis.fetch,digests=C
   const cn=JSON.parse(await read('catalogue/i18n/zh.json'));
   const catalogue=buildCatalogue(data,muscleMap,cn);
   catalogue.source_digests={...digests};
+  return catalogue;
+}
+
+export async function importCatalogue(file,options){
+  const catalogue=await fetchCatalogue(options);
   // Every required fetch and schema check finishes before touching the existing file.
   await fs.mkdir(path.dirname(file),{recursive:true});
   await writeCredential(file,catalogue);

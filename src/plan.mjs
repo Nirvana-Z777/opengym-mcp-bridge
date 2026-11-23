@@ -219,7 +219,7 @@ export class PersonalGymBridge {
     const names={...(await this.catalogue()).names}; const snap=await this.client.getData();
     const customIds=new Set();
     for(const e of snap.state?.customEx||[])if(typeof e.id==='string'&&typeof e.n==='string'){names[e.id]=e.n;customIds.add(e.id);}
-    if(!Object.keys(names).length)throw new PlanError('动作目录尚未加载；请运行 node src/catalogue.mjs');
+    if(!Object.keys(names).length)throw new PlanError('动作目录尚未加载；请使用 preview_catalogue_refresh 和 apply_catalogue_refresh');
     const q=query.trim().toLocaleLowerCase();
     const results=Object.entries(names).filter(([id,name])=>id.toLowerCase()===q||String(name).toLocaleLowerCase().includes(q)).slice(0,limit).map(([exercise_id,exercise_name])=>({exercise_id,exercise_name,source:customIds.has(exercise_id)?'custom':'official'}));
     return {query:query.trim(),count:results.length,results};
@@ -227,14 +227,15 @@ export class PersonalGymBridge {
   async getSummary(){const snap=await this.client.getData();return {...publicSummary(snap.state),server_revision:snap.rev};}
   async getRecent({limit=10}={}){const snap=await this.client.getData();return publicRecent(snap.state,limit,(await this.catalogue()).names);}
   async preview({actions}){
-    return this.previewFromSnapshot(await this.client.getData(),{actions},await this.catalogue());
+    const generation=this.writer.catalogueGeneration;
+    return this.previewFromSnapshot(await this.client.getData(),{actions},await this.catalogue(),generation);
   }
-  previewFromSnapshot(snap,{actions},catalogue){
+  previewFromSnapshot(snap,{actions},catalogue,generation){
     const planned=applyActions(snap.state,actions,catalogue.names);
-    return this.writer.prepare('plan',snap,planned.state,{changes:planned.changes},{changes:planned.changes});
+    return this.writer.prepare(generation,'plan',snap,planned.state,{changes:planned.changes},{changes:planned.changes});
   }
   async apply(input){return this.writer.commit('plan',input);}
-  async previewWorkoutLog({workouts},{applySessionMetadata}={}){
+  async previewWorkoutLog({workouts},{applySessionMetadata,generation=this.writer.catalogueGeneration}={}){
     if(!Array.isArray(workouts)||workouts.length<1||workouts.length>10)throw new PlanError('workouts 必须包含 1-10 次训练');
     const snap=await this.client.getData();const catalogue=await this.catalogue();
     const records=workouts.map(w=>normalizeWorkoutInput(w,{state:snap.state,catalogue,names:catalogue.names}));
@@ -245,22 +246,24 @@ export class PersonalGymBridge {
     const next=clone(snap.state);next.workouts=insertHistory(next.workouts||[],records);
     const statistics=updateHistoryStatistics(next,{affectedIds:records.flatMap(w=>w.entries.map(e=>e.id)),catalogue});
     const previews=records.map(w=>workoutPreview(w,next,catalogue.names,catalogue));
-    return this.writer.prepare('workout_log',snap,next,{workout_count:records.length,total_exercises:records.reduce((n,w)=>n+w.entries.length,0),total_sets:records.reduce((n,w)=>n+w.entries.reduce((s,e)=>s+e.sets.length,0),0),records:previews,statistics_changes:statistics},
+    return this.writer.prepare(generation,'workout_log',snap,next,{workout_count:records.length,total_exercises:records.reduce((n,w)=>n+w.entries.length,0),total_sets:records.reduce((n,w)=>n+w.entries.reduce((s,e)=>s+e.sets.length,0),0),records:previews,statistics_changes:statistics},
       {logged_count:records.length,records:records.map(w=>({workout_id:w.id,date:w.d,name:w.name}))});
   }
   async logWorkout(input,options={}){return this.writer.commit(options.kind||'workout_log',input,options);}
   async listCustomExercises(input={}){const snap=await this.client.getData();return listCustom(snap.state,input);}
   async previewCustomExerciseChange({actions}){
+    const generation=this.writer.catalogueGeneration;
     const snap=await this.client.getData();const change=changeCustomExercises(snap.state,actions,await this.catalogue());
-    return this.writer.prepare('custom_exercise',snap,change.state,change.details,change.result);
+    return this.writer.prepare(generation,'custom_exercise',snap,change.state,change.details,change.result);
   }
   async applyCustomExerciseChange(input){return this.writer.commit('custom_exercise',input);}
   async listWorkouts(input={}){const snap=await this.client.getData();return listWorkouts(snap.state,input);}
   async getWorkout(input){const snap=await this.client.getData();return getWorkout(snap.state,input,await this.catalogue());}
   async getExerciseHistory(input){const snap=await this.client.getData();return exerciseHistory(snap.state,input,await this.catalogue());}
   async previewWorkoutEdit(input){
+    const generation=this.writer.catalogueGeneration;
     const snap=await this.client.getData();const change=editWorkout(snap.state,input,await this.catalogue());
-    return this.writer.prepare('workout_edit',snap,change.state,change.details,change.result);
+    return this.writer.prepare(generation,'workout_edit',snap,change.state,change.details,change.result);
   }
   async applyWorkoutEdit(input){return this.writer.commit('workout_edit',input);}
 }

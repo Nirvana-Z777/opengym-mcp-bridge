@@ -1,6 +1,12 @@
 # Changelog
 
-## v0.5.0 — development
+## v0.5.1 — development
+
+- Coordinate catalogue replacement and all guarded openGym writes through the shared writer lock. A successful catalogue change advances its generation and expires pending previews, including draft-finish proposals. Refresh failures preserve the existing catalogue and do not send an openGym PUT.
+- Add regression coverage for all six upstream preview types, refresh failure and concurrency cases, private-store preservation, and catalogue-driven statistics. See [v0.5.1 change notes](docs/v0.5.1.md).
+- Update published-release guidance and keep the README and Compose image pin at the stable v0.5.0 image until v0.5.1 is released. The tunnel-client image and production deployments are outside this development change.
+
+## v0.5.0 — released
 
 - Pin the v1.4.5 exercise catalogue and validate the data wrapper, Chinese names and split muscle model. Catalogue refresh requires an approved, digest-bound proposal and backs up the previous copy.
 - Resolve the local day's plan and persist resumable, timed training drafts with immutable opening targets. Finish reports separate work completion, extra sets, elapsed and active time.

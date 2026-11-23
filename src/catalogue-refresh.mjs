@@ -24,7 +24,10 @@ export class CatalogueRefresh {
     if (!this.file) throw new PlanError('Local catalogue path is missing');
     try {
       const bytes = await fs.readFile(this.file);
-      return { bytes, data: JSON.parse(bytes) };
+      const data = JSON.parse(bytes);
+      if (!data?.names || typeof data.names !== 'object' || Array.isArray(data.names))
+        throw new Error('Not an exercise catalogue');
+      return { bytes, data };
     } catch (error) {
       if (error.code === 'ENOENT') return { bytes: null, data: null };
       throw new PlanError('Existing catalogue cannot be read safely', 'catalogue-invalid');
@@ -66,25 +69,66 @@ export class CatalogueRefresh {
 
   async apply({ proposal_id, confirmation }) {
     if (!this.writer.writes || confirmation !== '我确认写入') throw new PlanError('Catalogue refresh requires enabled writes and explicit confirmation');
-    const proposal = this.proposal;
-    if (!proposal || proposal.id !== proposal_id || proposal.expires <= this.writer.now()) throw new PlanError('Catalogue proposal expired', 'expired');
-    this.proposal = null;
-    const candidate = await this.fetchCandidate();
-    if (digest(JSON.stringify(candidate)) !== proposal.nextHash) throw new PlanError('Candidate changed', 'conflict');
-    await fs.mkdir(path.dirname(this.file), { recursive: true });
-    const lock = this.file + '.refresh-lock';
-    await fs.mkdir(lock, { mode: 0o700 });
-    try {
-      const current = await this.read();
-      if ((current.bytes ? digest(current.bytes) : null) !== proposal.previousHash) throw new PlanError('Current catalogue changed', 'conflict');
-      if (proposal.expires <= this.writer.now()) throw new PlanError('Catalogue proposal expired', 'expired');
-      const backup = current.bytes ? path.basename(this.file) + '.' + randomUUID() + '.bak' : null;
-      if (backup) {
-        const handle = await fs.open(path.join(path.dirname(this.file), backup), 'wx', 0o600);
-        try { await handle.writeFile(current.bytes); await handle.sync(); } finally { await handle.close(); }
+    return this.writer.refreshCatalogue(async () => {
+      const proposal = this.proposal;
+      if (!proposal || proposal.id !== proposal_id || proposal.expires <= this.writer.now())
+        throw new PlanError('Catalogue proposal expired', 'expired');
+
+      const directory = path.dirname(this.file);
+      const lock = this.file + '.refresh-lock';
+      try {
+        await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+        await fs.mkdir(lock, { mode: 0o700 });
+      } catch (error) {
+        if (error.code === 'EEXIST') throw new PlanError('Catalogue refresh lock is occupied', 'busy');
+        throw new PlanError('Could not acquire the catalogue refresh lock', 'catalogue-lock-failed');
       }
-      await writeCredential(this.file, candidate);
-      return { applied: true, backup, catalogue: metadata(candidate) };
-    } finally { await fs.rmdir(lock); }
+
+      let result;
+      try {
+        this.proposal = null;
+        const candidate = await this.fetchCandidate();
+        if (digest(JSON.stringify(candidate)) !== proposal.nextHash)
+          throw new PlanError('Candidate changed', 'conflict');
+        const readUnchanged = async () => {
+          const current = await this.read();
+          if ((current.bytes ? digest(current.bytes) : null) !== proposal.previousHash)
+            throw new PlanError('Current catalogue changed', 'conflict');
+          if (proposal.expires <= this.writer.now())
+            throw new PlanError('Catalogue proposal expired', 'expired');
+          return current;
+        };
+        const current = await readUnchanged();
+        const backup = current.bytes ? path.basename(this.file) + '.' + randomUUID() + '.bak' : null;
+        if (backup) await this.backup(path.join(directory, backup), current.bytes);
+        try {
+          await writeCredential(this.file, candidate, { beforeReplace: readUnchanged });
+        } catch (error) {
+          if (error instanceof PlanError) throw error;
+          throw new PlanError('Atomic catalogue replacement failed; previous file kept', 'catalogue-replace-failed');
+        }
+        result = { applied: true, backup, catalogue: metadata(candidate) };
+      } finally {
+        try { await fs.rmdir(lock); }
+        catch {
+          // Once renamed, report success and invalidate old previews even if cleanup fails.
+          if (result) result.warning = 'Catalogue replaced, but the refresh lock could not be removed.';
+        }
+      }
+      return result;
+    });
+  }
+
+  async backup(file, bytes) {
+    let created = false;
+    try {
+      const handle = await fs.open(file, 'wx', 0o600);
+      created = true;
+      try { await handle.writeFile(bytes); await handle.sync(); }
+      finally { await handle.close(); }
+    } catch {
+      if (created) await fs.rm(file, { force: true }).catch(() => {});
+      throw new PlanError('Catalogue backup failed; previous file kept', 'backup-failed');
+    }
   }
 }

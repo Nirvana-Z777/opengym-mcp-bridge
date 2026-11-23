@@ -1,45 +1,73 @@
-# Backup, release and deployment procedure
+# Backups, catalogue maintenance and deployment
 
-The published release remains `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0`. This branch has development package metadata **0.4.1**, but the README/Compose deployment pin stays at the published 0.4.0 until a separately approved release. PR development and CI do not change production NAS/container/Tunnel configuration or publish packages.
+The published release and Compose example currently use `ghcr.io/nirvana-z777/opengym-mcp-bridge:0.5.0`. This branch develops v0.5.1. Keep the published image pin at 0.5.0 until v0.5.1 has passed review, been merged and released. Development work does not update a NAS deployment or publish a release image. The `tunnel-client` is an independent component and its image is outside this Bridge release.
 
-## Mandatory local backups
+## Guarded openGym writes
 
-Every upstream writer, including draft completion, shares the same guard. Successful preview and human confirmation are followed by a fresh revision/write-ID/content check, then a mandatory backup, then at most one PUT. Backup failure means no PUT. There is no opt-out setting. Local drafts/feedback are separately durable under `/store/local/` and should be retained with `/store/backups/`.
+Every upstream writer, including draft completion and body-data synchronization, uses the same guard. After an exact preview and explicit confirmation, the Bridge checks the current revision, write ID and state fingerprint, creates a private backup, sends at most one PUT, and reads the result back. A backup failure prevents the PUT. A 409 or uncertain response must be investigated with read-only queries. Never retry a consumed proposal.
 
-## Optional catalogue refresh for v0.4.1
+Catalogue replacement and upstream writes share one in-process coordination lock. An overlapping operation is rejected before it can replace the catalogue, create a write backup or send a PUT. Configure one Bridge writer for each shared local store. The coordination lock is process-local, so running two Bridge processes against the same store is unsupported.
 
-The maintenance importer reads only three text/JSON files from the fixed official v1.4.2 commit: EXDB, the independent muscle map and Chinese names. Each file's SHA-256 and parsed shape must match before an atomic replacement; HTTP, transport, digest or parse failures keep the old catalogue. It downloads no media, touches no openGym state and performs no history migration. Existing format-2 and names-only files remain readable. They do not automatically acquire the v1.4.2 row corrections: a separately authorized operator must refresh the optional text catalogue using `node src/catalogue.mjs` in the intended Bridge environment.
+## Catalogue refresh in v0.5.1
 
-Record the existing catalogue source and retain a private copy before that maintenance. Keep writes off and discard old preview IDs around a refresh; new previews should use the new metadata consistently. Verify `source_version`, `source_commit` and `source_digests` in the local catalogue, and the returned weekly `muscle_weight_catalogue`. Historical explicit weight snapshots remain authoritative even when the refreshed catalogue differs. No production refresh is performed by this PR.
+The Bridge's official exercise catalogue is a local metadata copy. It does not reside in the openGym account. Refreshing it does not edit training history, drafts, questionnaires, feedback, body data, pairing credentials or MCP access credentials.
 
-Default location is `backups/` beside `CATALOGUE_NAMES_FILE`: with the existing Compose `/store/exercise-names.json`, it is `/store/backups/` inside the container, using the existing `./store:/store` mount. Optional `OPENGYM_BACKUP_DIR` selects a dedicated backup directory; `OPENGYM_BACKUP_KEEP` is 1–100, default 20. Configure environment variables directly on the Bridge only if deviating from defaults. The sample Compose does not need a new mount or port.
+Use the MCP workflow for routine updates:
 
-The directory is checked against symlinks, created/restricted to 0700; files use 0600. A uniquely named temporary file is written and fsynced before atomic rename. Only regular files matching the Bridge's precise backup filename format participate in retention; unrelated files, directories and symlinks are left alone. Pruning failures also refuse the write. Backups store the pre-edit training state, source revision/write ID, timestamp and operation type. They exclude authentication response envelopes; credential-like keys inside state cause refusal rather than writing credentials into a backup.
+1. Call `get_catalogue_status` and review the current source, version, commit and exercise count.
+2. Call `preview_catalogue_refresh`. Review the pinned candidate, source digests and samples of added, removed, renamed and remapped exercises.
+3. After reviewing that specific preview, explicitly approve it and call `apply_catalogue_refresh` with its `proposal_id` and `confirmation: "我确认写入"`.
+4. Read `get_catalogue_status` again and confirm the expected source version, commit and count.
 
-Backups necessarily contain private training data. Keep the mounted directory restricted and backed up through your normal private backup process. They are ignored by Git and excluded from Docker build context. MCP returns only backup ID, timestamp, source revision and retention limit. It does not return file content or expose a restore tool. Do not attach a backup to a public issue.
+The Bridge rechecks the preview's current-catalogue fingerprint and candidate digest while holding the shared lock. It validates every downloaded source before touching the local catalogue, writes a private backup of the existing catalogue and atomically replaces the file. A successful change advances the catalogue generation and expires all earlier upstream write previews, including draft completion, with its draft revision and submission metadata held in the same proposal. Each preview captures the current generation before awaiting any data. If the generation changes before a preview is registered, the Bridge rejects it as expired. The commit checks invalidation before creating an openGym backup or sending a PUT.
 
-## Manual recovery with revision control
+Overlap, stale fingerprints, download, digest or schema errors, and backup or rename failures prevent replacement. If there is a stale fingerprint, the Bridge preserves the file it found instead of overwriting the concurrent change. They do not send an openGym PUT. If the catalogue did not successfully change, the Bridge does not expire otherwise valid upstream previews solely because an attempted refresh failed. Check the returned error, preserve the logs, and retry only after the underlying cause has been resolved and a new refresh preview is generated.
 
-Recovery is an intentional data change and requires the owner's approval. Do this on a disposable account first. Do not copy old `_rev`/`_wid` into a blind PUT or replace the live data directory.
+### CLI maintenance fallback and recovery
 
-1. With writes disabled, inspect the selected private backup offline. Verify its format, timestamp, operation and source revision; identify the specific changes that need recovery. Save a private current-state snapshot too. Do not paste either snapshot into public tickets or chat.
-2. Read the latest live state through authenticated `/api/data` using the existing secure credential mechanism. Compare the selected backup with that state, accounting for all newer sessions/notes/device changes. Prefer a selective, previewed inverse edit through supported Bridge tools rather than restoring an old whole profile.
-3. If whole-state recovery is necessary, prepare a reviewed recovery payload from the latest state and the explicitly approved recovered fields. Retain current sync records/unknown fields, do not use `stamped: true`, and submit only with **the latest read's** `baseRev` and `baseWid`. Take a new restricted atomic backup immediately before submitting. If the latest state changed, stop and rebuild the recovery preview; never force or retry a 409. This release provides no automatic recovery writer.
-4. Submit once, then reread and compare the intended content. On timeout or failed reread, use read-only checks first. Reconcile a disposable Android/web client to check restored data and preserved later records before authorizing production use. Stop if the required merge, timestamps or tombstones cannot be established safely.
+The CLI importer is a maintenance fallback. Stop the Bridge container before running it because the CLI cannot coordinate with the running Bridge's in-process lock. Keep the existing local catalogue and its backup private. The command is `node src/catalogue.mjs` inside the Bridge source/container with the same intended environment. It imports only pinned official text metadata and does not download exercise media.
+
+If a refresh needs rollback, stop the Bridge first. Identify the exact catalogue backup created by that refresh and check its source and contents privately. Restore only that catalogue file through a temporary file in the same directory, flush it, then atomically rename it over `exercise-names.json`. Do not copy the entire `store/` directory or overwrite credentials, drafts, feedback or backups. Restart one Bridge process and verify `get_catalogue_status` and a read-only exercise query before enabling writes. If atomic restoration fails, keep the Bridge stopped and preserve both the current file and selected backup for diagnosis.
+
+If refresh reports an occupied lock after the operation has ended or warns that lock cleanup failed, stop the Bridge and verify no other process is updating the catalogue. Remove only the abandoned empty `<catalogue-file>.refresh-lock` directory before retrying. Keep any catalogue backup.
+
+Historical explicit muscle snapshots remain authoritative for analysis. A catalogue refresh changes metadata used for new projections but does not migrate or rewrite old training records.
+
+## Common workflows introduced in v0.5.0
+
+| Task | Tool sequence |
+| --- | --- |
+| Plan and record a workout | `get_today_plan` with an IANA time zone → `preview_planned_session` → `start_planned_workout` → record actual sets and manage the clock with `draft_session_clock`. End the clock before previewing or confirming draft completion. |
+| Read or synchronize native body data | Use `get_native_body_data` with a date range. Review `preview_body_sync` with new readings or selected private record IDs. Use `apply_body_sync` after exact confirmation. |
+| Keep feedback in the Bridge | Use `record_session_feedback` for questionnaires and individual exercises, or `record_body_feedback` for private body feedback. Read back with the corresponding list tool. |
+| Review suggestions or trends | `get_training_suggestion` reads the latest evidence. Select a suggestion with `preview_training_suggestion` and review the resulting plan proposal before using `apply_plan_change`. Use `get_training_trend` to read the series and SVG for a date range. |
+
+See [example calls](v0.5.0.md#工具及调用示例).
+
+## Local data and mandatory backups
+
+The existing Compose mount stores local files under `/store/`. OpenGym write backups normally live in `/store/backups/`; private drafts and feedback remain under `/store/local/`. Keep `store/` and `secrets/` access restricted and include them in the owner's private backup routine. They contain account data and credentials. Never attach them to a public issue or add them to Git.
+
+The backup store writes restricted files through a temporary file and atomic rename. Only Bridge backup files participate in retention. Backups contain pre-edit training state and revision metadata, but not authentication response envelopes. A credential-like value inside a state causes backup refusal. There is no automatic restore writer.
+
+### Manual recovery of an upstream write
+
+Recovery is a deliberate data change. Inspect a selected private backup offline, then read the latest live state and account for newer sessions, notes and device changes. Prefer a narrowly previewed inverse edit. If a whole-state repair is unavoidable, prepare a reviewed payload from the latest state and preserve current synchronization markers and unknown fields. Use only the latest read's `baseRev` and `baseWid`, make a new restricted backup, submit once and read back the result. Stop and rebuild the preview if the live state changes. Never force a 409 or retry an uncertain submission.
 
 ## Release procedure
 
-After the owner approves the PR and formal release:
+For v0.5.1, the published Compose image remains 0.5.0 during development. The release flow is:
 
-1. On the development branch, align package/lock metadata and README/Compose release pins to the approved target version (0.4.1 for the next release). Check MCP initialization derives that version from the package. Do not claim an unpublished image is available.
-2. Pass the complete regression suite, both pinned official compatibility jobs, security/context checks and isolated Docker runtime smoke test on the final PR head. Only then merge the approved PR; main publishes its development `main` image.
-3. Create/push the approved version tag only after main succeeds. The existing `GITHUB_TOKEN` publishes the version and `latest` for linux/amd64. Verify tag/package parity, image digest and MCP version inside the published image. This maintenance PR does not authorize that step.
-4. Confirm package visibility Public and anonymous pull using an empty Docker config. No PAT, pairing token or runtime API key belongs in Actions. PR CI only builds/tests an ephemeral local image; it never logs into GHCR or pushes an image.
+1. Align `package.json`, lock metadata and MCP initialization version to 0.5.1. Keep README and Compose references to 0.5.0 until release publication.
+2. Run the complete regression suite, pinned official v1.4.1, v1.4.2 and v1.4.5 compatibility jobs, security/context checks and isolated Docker build/runtime checks on the reviewed PR head.
+3. After the PR is approved and merged, wait for the `main` workflow to pass.
+4. Only after separate release approval, create the matching `v0.5.1` tag. The workflow publishes `0.5.1` and `latest` for `linux/amd64` with GitHub's `GITHUB_TOKEN`. It checks tag/package version parity and image initialization. Confirm the release digest and anonymous pulls before announcing availability.
+5. Confirm the GHCR package is Public. If GitHub created it as private, change visibility in the package settings, then verify an anonymous pull with an empty Docker credential directory.
 
-## Production upgrade and rollback advice
+The workflow does not need a PAT, openGym token, MCP token or runtime API key. Pull requests build temporary images without package-write permission. A successful merge or release does not itself authorize a production NAS upgrade.
 
-Production upgrade is a separate authorization after release. Keep the currently pinned 0.4.0 image/digest and working configuration. First test the new image with a separate synthetic account, especially Android/web synchronization, load meaning, custom renames and conflict behavior. The CI frontend store checks do not replace real device acceptance.
+## NAS upgrade and rollback
 
-For an authorized upgrade, privately back up the current Compose configuration and data (including private drafts, feedback, backups and catalogue), note the current image digest, keep writes off, and pull the approved immutable image. Refresh only the optional text catalogue if needed, without touching credentials or other store files. Recreate only the Bridge service; leave openGym and Tunnel running. Check health/MCP initialization and read-only queries before allowing a small previewed write.
+Production upgrade is a separate owner action after the release exists. Before upgrading, privately record the current image tag or digest and back up the deployment configuration, `store/` and `secrets/`. Pull the approved immutable Bridge image and recreate only the Bridge service. Keep openGym and tunnel-client running. Check MCP initialization, all expected tools, catalogue status and read-only queries first. Enable writes only after confirming the deployment and using the normal preview/backup/readback flow.
 
-To roll back code, pin the previous known-good digest/tag and recreate only the Bridge service. Retain the private local store even if the older code cannot show a newer projection. Do not delete store/secrets or replace training data with an old snapshot. Code rollback does not undo already accepted training edits; use reviewed selective recovery above if required. No Watchtower or unattended production replacement is introduced.
+If the update fails, stop the Bridge, restore the prior known-good Bridge image pin and restart only that service. Keep the current private store. Restore a catalogue backup only when a catalogue change is the issue, using the atomic single-file procedure above. Code rollback does not undo an openGym write already accepted by the server. Investigate those records read-only and use the reviewed recovery process if a repair is needed.

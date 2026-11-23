@@ -4,64 +4,53 @@
 
 A community-maintained, self-hosted MCP bridge for [openGym](https://github.com/DuarteSantos8/openGym). This is **not an official openGym project**.
 
-- Reads the openGym account through its supported web/API interface and a dedicated paired token.
-- Offers MCP tools for status, plan/history reads, official exercise-name search, guarded plan changes, and guarded historical workout logging.
-- Supports confirmed, preview-first writes when `OPENGYM_ALLOW_WRITES=1`.
-- v0.3.2 adds custom exercises, precise history queries, saved-workout edits, notes, phases, unilateral sets and mandatory local pre-write backups.
-- Ships as a Docker image through GitHub Actions and GitHub Container Registry (GHCR).
+The current stable release is **v0.5.0**. The `fix/v0.5.1-catalogue-proposal-invalidation` branch develops catalogue-refresh safety fixes from that release. See the [v0.5.0 guide](docs/v0.5.0.md), [v0.5.1 change notes](docs/v0.5.1.md), [operations guide](docs/operations.md), and [v0.4.1 baseline](docs/v0.4.1.md). A development branch does not make its image available as a release.
 
-This project is experimental. Back up your openGym data and inspect every write preview before confirming it.
-
-The current published release is **v0.4.1**. This branch develops **v0.5.0** against official openGym v1.4.5 while retaining the v1.4.1 and v1.4.2 checks. See the [v0.5.0 feature and acceptance guide](docs/v0.5.0.md), [previous v0.4.1 baseline](docs/v0.4.1.md) and [operations guide](docs/operations.md).
-
-## v0.4.0
-
-This release adds existing-plan editing, persistent account-private workout drafts linked to exact A/B/C routine IDs, confirmed single-session completion, progress/weekly muscle-volume analysis and private bodyweight/feedback records. It skips v0.3.3. See [v0.4.0 tools, safety and storage](docs/v0.4.0.md) and the [isolated acceptance report](docs/acceptance-v0.4.0.md). All 155 regression tests and 15 official v1.4.1 compatibility groups pass. Real browser/PWA and Android device acceptance remains unverified; bodyweight/feedback records are not synchronized to the official app. Publishing a release does not upgrade an existing NAS deployment.
-
-## Docker image
+## Published image
 
 ```text
-ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0
+ghcr.io/nirvana-z777/opengym-mcp-bridge:0.5.0
 ```
 
-The image is built from this repository by `.github/workflows/publish-image.yml`. Pushing to `main` publishes the `main` tag. Pushing a version tag such as `v0.4.0` publishes `0.4.0` and `latest`. GitHub Actions runs the full regression suite, pinned official API/frontend compatibility acceptance and isolated image checks before publishing; version-tag runs also verify anonymous pulls of both release tags.
+The image targets `linux/amd64`. Pin a released version or verified digest for deployments. `latest` tracks the most recent stable release. The example Compose file stays on the currently published `0.5.0` image while v0.5.1 is under review. The optional tunnel-client is an independent image and is not changed by this Bridge release.
 
-Images target `linux/amd64`. Pin `0.4.0` or its verified digest for a release deployment; `main` tracks development and `latest` tracks the most recent stable release. The Dockerfile contains runtime source, package metadata and the MIT license; test fixtures and local configuration are excluded from its build context.
+GitHub Actions tests and builds pull requests without package-write permission. Merging to `main` publishes the development `main` image. A verified version tag publishes the matching version and `latest` through GitHub's `GITHUB_TOKEN`. See the release steps in [operations](docs/operations.md).
 
-## Security first
+## Capabilities
 
-Never commit or bake any of the following into the repository or image:
+The Bridge provides 52 MCP tools, with 32 available when upstream writes are disabled. They cover:
 
-- `secrets/`, `opengym-token.json`, `mcp-access-token`, `openai-runtime-key`
-- `.env`, personal tunnel IDs/configuration, personal IP addresses or private workout exports
-- `store/` or other user data
+- Connection status, summaries, plans, recent sessions and official exercise search.
+- Previewed plan changes and historical workout logging, with explicit confirmation, revision checks, local backup, one write and readback.
+- Custom exercises, paginated workout history, workout details, exercise history and guarded edits to saved sessions.
+- Today-plan resolution, resumable workout drafts, session timing, measured sets, completion reports, progress and weekly muscle summaries.
+- Native openGym weigh-ins and circumference reads, plus explicitly selected, previewed synchronization to openGym.
+- Bridge-private pre-session questionnaires, per-exercise feedback and body feedback. These records remain in the Bridge's account-scoped local store and are separate from native openGym body measurements.
+- Evidence-based next-session suggestions and five trend views for volume, muscle distribution, weight, exercise progress and discomfort. A suggestion does not change a routine. Selecting one creates a separate plan preview that still requires confirmation.
+- Official exercise catalogue status, change preview and confirmed refresh. A refresh validates pinned upstream files, backs up the old local catalogue, and replaces it atomically. In v0.5.1, a successful catalogue change also invalidates pending upstream-write previews created against the prior catalogue.
 
-The repository ignores local secret/data paths. The Docker build context also excludes them. Keep the Bridge behind the Docker network and do not publish its MCP port directly to the Internet. The example Compose file does not map a host port.
+Tool names are `search`, `fetch`, `get_status`, `get_summary`, `get_plan`, `get_recent_workouts`, `search_exercises`, `preview_plan_change`, `preview_workout_log`, `log_workout`, `apply_plan_change`, `get_catalogue_status`, `preview_catalogue_refresh`, `apply_catalogue_refresh`, `list_custom_exercises`, `preview_custom_exercise_change`, `apply_custom_exercise_change`, `list_workouts`, `get_workout`, `get_exercise_history`, `preview_workout_edit`, `apply_workout_edit`, `get_native_body_data`, `preview_body_sync`, `apply_body_sync`, `record_session_feedback`, `list_session_feedback`, `get_training_suggestion`, `preview_training_suggestion`, `get_training_trend`, `get_today_plan`, `preview_planned_session`, `start_planned_workout`, `draft_session_clock`, `start_workout_draft`, `list_workout_drafts`, `get_workout_draft`, `draft_add_exercise`, `draft_remove_exercise`, `draft_add_set`, `draft_update_set`, `draft_remove_set`, `draft_set_note`, `draft_set_routine`, `preview_finish_workout_draft`, `commit_finished_workout_draft`, `abandon_workout_draft`, `recover_workout_draft`, `get_workout_progress`, `get_weekly_training_summary`, `record_body_feedback`, and `list_body_feedback`.
+
+Every upstream write requires the exact preview, explicit confirmation `我确认写入`, a fresh revision/write-ID/content check, a private backup and a readback. If a response is uncertain, investigate read-only and do not retry the same proposal. Catalogue refreshes and upstream writes use one shared in-process guard. Run one Bridge writer against a given local store so separate processes cannot bypass that coordination.
 
 ## Quick deployment reference
 
-1. Copy `.env.example` to `.env` and set `OPENGYM_BASE_URL` to the openGym address reachable from the Bridge container.
-2. Copy `docker-compose.example.yaml` to your local `docker-compose.yaml`.
-3. Create `secrets/` and `store/` locally. Pair the Bridge with openGym using its supported pairing flow; never paste pairing codes or tokens into public issues.
-4. If using OpenAI Secure MCP Tunnel, copy `tunnel-client.example.yaml` to the local `tunnel-client.yaml`, replace the tunnel ID, and place the restricted runtime key and Bridge token in the expected files under `secrets/`.
-5. Keep `OPENGYM_ALLOW_WRITES=0` until you are ready to use the write tools. When enabled, every write still requires a short-lived preview and explicit confirmation.
-6. Deploy with Docker Compose. The Bridge uses the GHCR image, not `build: .`.
+1. Copy `.env.example` to `.env` and set `OPENGYM_BASE_URL` to the address reachable from the Bridge container.
+2. Copy `docker-compose.example.yaml` to the private `docker-compose.yaml` used for deployment.
+3. Create `secrets/` and `store/` locally. Pair through the supported flow, and keep pairing credentials private.
+4. If using OpenAI Secure MCP Tunnel, copy `tunnel-client.example.yaml` to the private `tunnel-client.yaml`, then supply its credentials through the private `secrets/` files.
+5. Keep `OPENGYM_ALLOW_WRITES=0` until writes are needed. Every upstream write still requires a short-lived preview and explicit confirmation.
+6. Start with Docker Compose. The Bridge service uses the published GHCR image and does not build from the local source tree.
 
-The example files are templates, not a ready-to-run configuration. Do not publish your locally customized `.env`, `docker-compose.yaml`, `tunnel-client.yaml`, or `secrets/`.
+The example files are templates. Never publish a customized `.env`, `docker-compose.yaml`, `tunnel-client.yaml`, `secrets/`, `store/`, private backups, or training exports. Keep the MCP port on the private Docker network.
 
-## MCP tools
+## Catalogue refresh
 
-Read-only tools include `get_status`, `get_summary`, `get_plan`, `get_recent_workouts`, and `search_exercises`. Writes are preview-first: `preview_plan_change` / `apply_plan_change` and `preview_workout_log` / `log_workout`. The apply/log tools are hidden when `OPENGYM_ALLOW_WRITES` is not `1`.
-
-History tools include `list_custom_exercises`, `preview_custom_exercise_change` / `apply_custom_exercise_change`, `list_workouts`, `get_workout`, `get_exercise_history`, and `preview_workout_edit` / `apply_workout_edit`. The draft workflow adds `preview_finish_workout_draft` / `commit_finished_workout_draft`; see the v0.4.0 tool reference for all 37 tools. Every upstream writer requires exact human confirmation `我确认写入`, a fresh version check and a successful local backup. The existing Compose store mount places backups at `/store/backups/`, retaining 20 by default, and persists private drafts/feedback under `/store/local/`. No automatic restore writer exists. Notes and descriptions are untrusted data.
-
-Historical workout logging accepts real recorded dates and actual per-set data. For each set, provide exactly one of `reps` or `seconds`; do not invent unknown dates, weights, repetitions, or durations.
-
-Unilateral reps instead require actual `sides.L` and `sides.R` measurements; timed sides use separate flat rows. Optional `phase`, effort and `weight_basis` preserve the native model without converting historical weights. Refresh the optional text catalogue with `node src/catalogue.mjs` for full metadata checks before custom creation/renaming or derived-record edits. Date/time migration, legacy identity migration and unsupported complex structures are explicitly refused; read the compatibility limits before use.
+Use the MCP tools in order: call `get_catalogue_status`, call `preview_catalogue_refresh`, inspect the candidate version and reported changes, then call `apply_catalogue_refresh` with that preview ID only after explicit approval. A successful refresh backs up and atomically replaces the Bridge's local official catalogue. In v0.5.1, previews created before a successful catalogue change expire. A failed or unchanged refresh does not replace the catalogue. The maintenance CLI is a recovery fallback described in [operations](docs/operations.md).
 
 ## Local development
 
-Requires Node.js 22 or newer. The bridge has no npm runtime dependencies.
+Requires Node.js 22 or newer. The Bridge has no npm runtime dependencies.
 
 ```bash
 npm ci --ignore-scripts
@@ -69,29 +58,10 @@ npm test
 npm start
 ```
 
-All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Regression tests use mocked clients or temporary local files. The official compatibility matrix starts pinned v1.4.1, v1.4.2 and v1.4.5 servers with new disposable accounts, and tests actual MCP processes and official frontend sync modules over local HTTP. It verifies the 37 original tools, renewal, conflicts, lost responses and newer feature flows; it never reads production credentials or history. CI requires at least all 209 v0.4.1 baseline tests. MCP initialization reports the development version from `package.json`.
+Tests use synthetic accounts, identifiers, dates, measurements and set data. The compatibility jobs use isolated openGym versions and disposable test accounts. They do not access production credentials, NAS configuration or private training history. Pull requests also check Docker context exclusions, build `linux/amd64`, and smoke-test MCP initialization in a network-isolated container.
 
-Pull requests also audit Docker context exclusion with synthetic canaries, build linux/amd64 and smoke-test MCP initialization with networking disabled. They do not receive package-write permission or publish images. Production upgrades remain a separate owner-approved operation.
+## Security and licensing
 
-## Release process
+Never commit or bake `.env`, `secrets/`, `store/`, pairing tokens, MCP access tokens, runtime keys, personal tunnel settings, private IP addresses or workout exports into source or images. Docker build context excludes tests and local configuration. GitHub Actions uses the automatically supplied `GITHUB_TOKEN`; image publishing does not need a PAT or runtime credential.
 
-1. Update the version in `package.json`, regenerate `package-lock.json` with `npm install --package-lock-only --ignore-scripts`, and update the pinned image in this README and `docker-compose.example.yaml`.
-2. Run `npm test` locally.
-3. Commit on a release/development branch, pass the full PR regression/official compatibility/image CI, then merge the approved PR into `main`; this publishes a `main` image for testing.
-4. Create a GitHub Release and a tag such as `v0.4.0` at the verified merge commit to publish `0.4.0` and `latest`. CI verifies that the tag matches `package.json`; a failed test prevents publication. Confirm both tags resolve to the reported publication digest and initialize with the expected version before announcing completion.
-5. After the first package publication, set the GHCR package visibility to **Public** in the package settings if GitHub created it as private by default.
-
-The workflow authenticates with the automatically provided `GITHUB_TOKEN`. Its test job has `contents: read`; only the publishing job also receives `packages: write`. No PAT, runtime API key, pairing token or tunnel credential is required for image publication. Actions are pinned to reviewed commit SHAs; update those pins when adopting an upstream release.
-
-After making the package public, verify a pull without stored registry credentials on a machine with Docker:
-
-```bash
-anonymous_config=$(mktemp -d)
-docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:0.4.0
-docker --config "$anonymous_config" pull --platform linux/amd64 ghcr.io/nirvana-z777/opengym-mcp-bridge:latest
-rmdir "$anonymous_config"
-```
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+This project is MIT licensed. See [LICENSE](LICENSE).

@@ -138,7 +138,7 @@ export function analyse(state,input,catalogue,weekly=false,newest=false){
 }
 
 export class FeatureService {
- constructor(bridge,directory){this.bridge=bridge;this.directory=directory;this.proposals=new Map();}
+ constructor(bridge,directory){this.bridge=bridge;this.directory=directory;}
  async scope(){
   if(!this.directory)throw new PlanError('Private storage is not configured');const auth=await this.bridge.client.refreshLogin(),id=auth.user?.id;
   if(!['number','string'].includes(typeof id)||!String(id))throw new PlanError('Stable paired account ID required','account-required');
@@ -168,6 +168,7 @@ export class FeatureService {
    }));
   }
   if(name==='get_native_body_data')return readBody((await this.bridge.client.getData()).state,input);
+  const generation=this.bridge.writer.catalogueGeneration;
   const scope=await this.scope(),store=this.store(scope),id=input.draft_id;
   if(name==='preview_body_sync'){
    const items=[...(input.items??[])];
@@ -181,12 +182,13 @@ export class FeatureService {
    if(scope!==await this.scope())throw new PlanError('Paired account changed','account-mismatch');
    const {next,changes}=planBodySync(snap.state,items,this.bridge.writer.now());
    if(changes.some(c=>c.status==='conflict'))return {changes,conflict:true,proposal_id:null,write_ready:false};
-   const proposed=this.bridge.writer.prepare('body_sync',snap,next,{changes},{changes});
+   const proposed=this.bridge.writer.prepare(generation,'body_sync',snap,next,{changes},{changes});
    if(proposed.proposal_id)this.bridge.writer.proposals.get(proposed.proposal_id).accountScope=scope;
    return proposed;
   }
   if(name==='apply_body_sync'){
-   if(this.bridge.writer.proposals.get(input.proposal_id)?.accountScope!==scope)throw new PlanError('Body proposal expired or paired account changed','conflict');
+   const proposal=this.bridge.writer.requireProposal('body_sync',input.proposal_id);
+   if(proposal.accountScope!==scope)throw new PlanError('Paired account changed','conflict');
    return this.bridge.writer.commit('body_sync',input,{beforeSubmit:async()=>{
     if(scope!==await this.scope())throw new PlanError('Paired account changed','account-mismatch');
    }});
@@ -229,7 +231,7 @@ export class FeatureService {
    if(name==='get_training_suggestion')return {...suggestion,suggestion_id:suggestionId};
    if(suggestionId!==input.suggestion_id||!suggestion.recommendation)throw new PlanError('Refresh and select a current actionable suggestion','conflict');
    return this.bridge.previewFromSnapshot(snap,{actions:[{type:'set_exercise_target',routine_id:routine.id,
-      exercise_index:input.exercise_index,...suggestion.recommendation}]},catalogue);
+      exercise_index:input.exercise_index,...suggestion.recommendation}]},catalogue,generation);
   }
   if(name==='get_training_trend'){
    const snap=await this.bridge.client.getData();const dates={from:input.from,to:input.to};
@@ -266,7 +268,7 @@ export class FeatureService {
    const measured=d.clock?d.exercises.filter(e=>e.sets.map(normalizeSet).some(hasCompletedSet)):d.exercises;
    const exercises=measured.map(({occurrence_id,...e})=>e);
    const preview=await this.bridge.previewWorkoutLog({workouts:[{date:d.date,name:d.name,...(d.routine_id===undefined?{}:{routine_id:d.routine_id}),note:d.note,exercises}]},
-    d.clock?{applySessionMetadata:(workout,state)=>{
+    {generation,...(d.clock?{applySessionMetadata:(workout,state)=>{
      workout.start=d.clock.started_at; workout.end=d.clock.changed_at;
      workout.routineIds=[...d.routine_ids];
      for(const routineId of workout.routineIds)validateRoutineLink(state,routineId);
@@ -284,22 +286,22 @@ export class FeatureService {
       if(target.exclude_from_progression)entry.noProg=true;
       entry.target={...target.opening,...entry.target};
      }
-    }}:undefined);
+    }}:{})});
 
-   const proposal=this.bridge.writer.proposals.get(preview.proposal_id);proposal.kind='draft_workout';
+   const proposal=this.bridge.writer.requireProposal('workout_log',preview.proposal_id);
    try{validateRoutineLink(proposal.next,d.routine_id);}catch(error){this.bridge.writer.proposals.delete(preview.proposal_id);throw error;}
    const workout=proposal.next.workouts.find(w=>w.id===proposal.result.records[0].workout_id);
-   for(const [key,p] of this.proposals)if(p.expires<=this.bridge.writer.now())this.proposals.delete(key);while(this.proposals.size>=50)this.proposals.delete(this.proposals.keys().next().value);
-   this.proposals.set(preview.proposal_id,{scope,draft_id:id,revision:d.revision,workout:structuredClone(workout),expires:proposal.expires_at});
+   proposal.kind='draft_workout';
+   proposal.draft={scope,draft_id:id,revision:d.revision,workout:structuredClone(workout)};
    return {...preview,draft_id:id,draft_revision:d.revision,...(report?{completion:report}:{})};
   }
   if(name==='commit_finished_workout_draft'){
-   const link=this.proposals.get(input.proposal_id);if(!link)throw new PlanError('Draft preview expired','expired');if(link.scope!==scope)throw new PlanError('Paired account changed','account-mismatch');let journal;
+   const proposal=this.bridge.writer.requireProposal('draft_workout',input.proposal_id);
+   const link=proposal.draft;if(link.scope!==scope)throw new PlanError('Paired account changed','account-mismatch');let journal;
    const result=await this.bridge.logWorkout(input,{kind:'draft_workout',beforeSubmit:async()=>{
     if(await this.scope()!==scope)throw new PlanError('Paired account changed','account-mismatch');
-    journal=await store.edit(link.draft_id,link.revision,d=>{d.status='verification_pending';d.submission={workout:link.workout,source_revision:this.bridge.writer.proposals.get(input.proposal_id).revision};});
+    journal=await store.edit(link.draft_id,link.revision,d=>{d.status='verification_pending';d.submission={workout:link.workout,source_revision:proposal.revision};});
    }});
-   this.proposals.delete(input.proposal_id);
    if(result.applied===true&&result.verified===true){try{await store.edit(link.draft_id,journal.revision,d=>{d.status='committed';d.committed_workout_id=link.workout.id;},['verification_pending']);}
     catch{return {...result,draft_id:link.draft_id,draft_status:'verification_pending',warning:'Upstream verified; local settlement failed. Recover by reading only; never resubmit.'};}}
    return {...result,draft_id:link.draft_id,draft_status:result.verified?'committed':'verification_pending'};

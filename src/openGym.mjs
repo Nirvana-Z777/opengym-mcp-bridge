@@ -11,13 +11,14 @@ export class GymHttpError extends Error {
 }
 
 // Atomic write, permission 0600; never print, log or expose a bearer token.
-export async function writeCredential(file, data) {
+export async function writeCredential(file, data, { beforeReplace } = {}) {
   const dir = path.dirname(file);
   await fs.mkdir(dir, { recursive: true, mode: 0o700 });
   const temp = `${file}.${process.pid}.tmp`;
   try {
     await fs.writeFile(temp, JSON.stringify(data), { flag: 'wx', mode: 0o600 });
     await fs.chmod(temp, 0o600);
+    if (beforeReplace) await beforeReplace();
     await fs.rename(temp, file);
   } finally {
     await fs.rm(temp, { force: true }).catch(() => {});

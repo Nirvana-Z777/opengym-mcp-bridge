@@ -12,9 +12,43 @@ function content(value, root = true) {
 export const sameContent = (a, b) => isDeepStrictEqual(content(a), content(b));
 export const fingerprint = state => createHash('sha256').update(JSON.stringify(state)).digest('hex');
 
-// Every mutating MCP tool uses this single prepare/commit boundary. A consumed
+// Every upstream-writing MCP tool uses this single prepare/commit boundary. A consumed
 // proposal cannot issue another PUT, including after a timeout or a failed reread.
 export class GuardedWrites {
+  #busy = false;
+  #catalogueGeneration = 0;
+
+  get catalogueGeneration() { return this.#catalogueGeneration; }
+
+  async #exclusive(operation) {
+    if (this.#busy) throw new PlanError('另一笔账户写入或动作目录刷新正在执行', 'busy');
+    this.#busy = true;
+    try { return await operation(); }
+    finally { this.#busy = false; }
+  }
+
+  async refreshCatalogue(replace) {
+    return this.#exclusive(async () => {
+      const result = await replace();
+      this.#catalogueGeneration++;
+      this.proposals.clear();
+      return result;
+    });
+  }
+
+  requireProposal(kind, id) {
+    const proposal = this.proposals.get(id);
+    if (!proposal || proposal.kind !== kind || proposal.expires_at <= this.now())
+      throw new PlanError('预览不存在或已过期，请重新预览', 'expired');
+    this.#checkCatalogue(proposal.catalogueGeneration);
+    return proposal;
+  }
+
+  #checkCatalogue(generation) {
+    if (generation !== this.#catalogueGeneration)
+      throw new PlanError('动作目录已更新，预览已过期，请重新预览', 'expired');
+  }
+
   constructor({ client, writes, backup, now = Date.now, ttl = 600000 }) {
     this.client = client;
     this.writes = writes;
@@ -22,16 +56,16 @@ export class GuardedWrites {
     this.now = now;
     this.ttl = ttl;
     this.proposals = new Map();
-    this.busy = false;
   }
-  prepare(kind, snapshot, nextState, details, result = {}) {
+  prepare(generation, kind, snapshot, nextState, details, result = {}) {
+    this.#checkCatalogue(generation);
     if (!isObject(snapshot.state) || !Number.isInteger(snapshot.rev) || snapshot.rev < 0) throw new PlanError('Invalid openGym snapshot');
     if (sameContent(snapshot.state, nextState)) return { ...details, changed: false, proposal_id: null, write_ready: false };
     for (const [id, p] of this.proposals) if (p.expires_at <= this.now()) this.proposals.delete(id);
     while (this.proposals.size >= 50) this.proposals.delete(this.proposals.keys().next().value);
     const id = randomUUID();
     const expires = this.now() + this.ttl;
-    this.proposals.set(id, { kind, revision: snapshot.rev, wid: snapshot.state._wid || null,
+    this.proposals.set(id, { kind, catalogueGeneration: generation, revision: snapshot.rev, wid: snapshot.state._wid || null,
       fingerprint: fingerprint(snapshot.state), next: structuredClone(nextState), result: structuredClone(result), expires_at: expires });
     return { ...details, changed: true, proposal_id: id, source_revision: snapshot.rev,
       expires_at: new Date(expires).toISOString(), write_ready: this.writes,
@@ -41,11 +75,8 @@ export class GuardedWrites {
   async commit(kind, { proposal_id, confirmation }, { beforeSubmit } = {}) {
     if (!this.writes) throw new PlanError('服务器未启用 OPENGYM_ALLOW_WRITES=1', 'write-disabled');
     if (confirmation !== '我确认写入') throw new PlanError('需要用户明确确认：我确认写入', 'approval-required');
-    if (this.busy) throw new PlanError('另一笔写入正在执行', 'busy');
-    const proposal = this.proposals.get(proposal_id);
-    if (!proposal || proposal.kind !== kind || proposal.expires_at <= this.now()) throw new PlanError('预览不存在或已过期，请重新预览', 'expired');
-    this.busy = true;
-    try {
+    return this.#exclusive(async () => {
+      const proposal = this.requireProposal(kind, proposal_id);
       const current = await this.client.getData();
       if (proposal.expires_at <= this.now()) {
         this.proposals.delete(proposal_id);
@@ -87,6 +118,6 @@ export class GuardedWrites {
         return { ...proposal.result, status: 'verification_pending', applied: true, verified: false, backup,
           warning: '服务端接受了请求，但回读失败；禁止重复提交，请稍后只读查询验证。' };
       }
-    } finally { this.busy = false; }
+    });
   }
 }

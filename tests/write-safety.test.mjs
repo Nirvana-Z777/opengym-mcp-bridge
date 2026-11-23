@@ -85,6 +85,6 @@ test('Expiry during backup blocks the PUT and concurrent commits are refused',as
 test('Verification tolerates only server metadata and device-local active session',async()=>{
   const client=new FakeClient();const writer=new GuardedWrites({client,writes:true,backup:{create:async()=>({id:'synthetic'})}});
   const snap=await client.getData();const next=structuredClone(snap.state);next.opaque.added=true;next.active={synthetic:true};
-  const p=writer.prepare('plan',snap,next,{});const put=client.putData.bind(client);client.putData=async x=>{const out=await put(x);delete client.data.active;return out;};
+  const p=writer.prepare(writer.catalogueGeneration,'plan',snap,next,{});const put=client.putData.bind(client);client.putData=async x=>{const out=await put(x);delete client.data.active;return out;};
   assert.equal((await writer.commit('plan',approve(p))).verified,true);
 });

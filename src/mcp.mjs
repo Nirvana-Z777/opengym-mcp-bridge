@@ -45,7 +45,7 @@ const TOOLS = [
     inputSchema:{type:'object',properties:{limit:{type:'integer',minimum:1,maximum:20,default:10}},additionalProperties:false},
   },
   {
-    name:'search_exercises', description:'Read-only. Search the official openGym exercise-name catalogue for valid exercise IDs before creating a routine. If the catalogue is not loaded, run node src/catalogue.mjs inside the Bridge container first.',
+    name:'search_exercises', description:'Read-only. Search the official openGym exercise-name catalogue for valid exercise IDs before creating a routine. If the catalogue is not loaded, use the catalogue refresh preview and confirmed apply.',
     inputSchema:{type:'object',required:['query'],properties:{query:{type:'string',minLength:1,maxLength:100},limit:{type:'integer',minimum:1,maximum:30,default:15}},additionalProperties:false},
   },
   {
@@ -99,7 +99,7 @@ const TOOLS = [
 const catalogueTools = [
   {name:'get_catalogue_status',description:'Read the local official text catalogue and pinned update status.',inputSchema:emptyObj},
   {name:'preview_catalogue_refresh',description:'Preview the validated local official catalogue update. No local or upstream write.',inputSchema:emptyObj},
-  {name:'apply_catalogue_refresh',description:'Apply an explicitly approved local catalogue proposal. Backup and atomic replacement.',inputSchema:{type:'object',required:['proposal_id','confirmation'],additionalProperties:false,properties:{proposal_id:{type:'string'},confirmation:{enum:['我确认写入']}}}}
+  {name:'apply_catalogue_refresh',description:'Apply an explicitly approved local catalogue proposal. Backup and atomic replacement; success expires existing account write previews.',inputSchema:{type:'object',required:['proposal_id','confirmation'],additionalProperties:false,properties:{proposal_id:{type:'string'},confirmation:{enum:['我确认写入']}}}}
 ];
 TOOLS.push(...EXTRA_TOOLS,...FEATURE_TOOLS,...catalogueTools);
 WRITE_TOOLS.add('apply_catalogue_refresh');

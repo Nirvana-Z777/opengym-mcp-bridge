@@ -9,6 +9,7 @@ import { listCustom, changeCustomExercises } from './custom-exercises.mjs';
 import { listWorkouts, getWorkout, exerciseHistory } from './workout-query.mjs';
 import { editWorkout } from './workout-edit.mjs';
 import { insertHistory, updateHistoryStatistics } from './workout-stats.mjs';
+import { CatalogueRefresh } from './catalogue-refresh.mjs';
 import { publicSet,publicRoutineExtras } from './workout-data.mjs';
 const clone = v => structuredClone(v);
 const obj = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -42,7 +43,7 @@ export function publicPlan(state, names={}) {
       id: r.id, name: nameOf(r),
       exercises: (Array.isArray(r.ex) ? r.ex : []).slice(0, 60).map((x, index) => ({
         exercise_index: index, exercise_id: x.id, exercise_name: exerciseName(state,names,x.id), sets: x.sets, reps: x.reps,
-        weight: x.weight, ...(x.restSec === undefined ? {} : { rest_sec: x.restSec }),...publicRoutineExtras(x),
+        weight: x.weight, ...(Number.isFinite(x.sec)?{seconds:x.sec}:{}), ...(x.restSec === undefined ? {} : { rest_sec: x.restSec }),...publicRoutineExtras(x),
       })),
     })),
     week: obj(state.week) ? state.week : {},
@@ -165,13 +166,16 @@ export function applyActions(inputState, actions, names={}) {
       continue;
     }
     if(action.type==='set_exercise_target'){
-      hasOnly(action,['type','routine_id','exercise_index','sets','reps','weight']);
+      hasOnly(action,['type','routine_id','exercise_index','sets','reps','weight','seconds','rest_sec','warmup_rest_sec','side_rest_sec','warmup_rest_off','rest_off','side_rest_off']);
       const routine=findRoutine(state,action.routine_id);
       if(!Array.isArray(routine.ex)) throw new PlanError(`训练模板 ${routine.id} 没有动作列表`);
       const idx=boundedInt(action.exercise_index,0,routine.ex.length-1,'exercise_index');
       const exercise=routine.ex[idx];
       if(!obj(exercise) || !exercise.id) throw new PlanError(`模板 ${routine.id} 的第 ${idx} 个动作无效`);
-      const fields=['sets','reps','weight'].filter(k=>Object.hasOwn(action,k));
+      const nativeKeys={seconds:'sec',rest_sec:'restSec',warmup_rest_sec:'warmupRestSec',side_rest_sec:'sideRestSec',warmup_rest_off:'warmupRestOff',rest_off:'restOff',side_rest_off:'sideRestOff'};
+      if(action.seconds!==undefined&&(exercise.mode!=='time'&&exercise.sec===undefined||action.reps!==undefined))throw new PlanError('seconds can only edit a timed target');
+      if(action.reps!==undefined&&(exercise.mode==='time'||exercise.sec!==undefined))throw new PlanError('Use seconds for timed targets');
+      const fields=['sets','reps','weight',...Object.keys(nativeKeys)].filter(k=>Object.hasOwn(action,k));
       if(!fields.length) throw new PlanError('set_exercise_target 至少指定 sets、reps 或 weight 之一');
       const from={},to={};
       for(const field of fields){
@@ -179,7 +183,11 @@ export function applyActions(inputState, actions, names={}) {
         if(field==='sets') boundedInt(val,1,12,field);
         if(field==='reps') boundedInt(val,1,100,field);
         if(field==='weight' && (typeof val!=='number'||!Number.isFinite(val)||val<0||val>1000)) throw new PlanError('weight 必须为 0 到 1000 的有限数字');
-        if(exercise[field]!==val){ from[field]=exercise[field]??null; to[field]=val; exercise[field]=val; }
+        if(field==='seconds')boundedInt(val,1,86400,field);
+        if(['rest_sec','warmup_rest_sec','side_rest_sec'].includes(field))boundedInt(val,0,3600,field);
+        if(['warmup_rest_off','rest_off','side_rest_off'].includes(field)&&typeof val!=='boolean')throw new PlanError(field+' must be boolean');
+        const key=nativeKeys[field]??field;
+        if(exercise[key]!==val){ from[field]=exercise[key]??null; to[field]=val; exercise[key]=val; }
       }
       if(Object.keys(to).length) changes.push({type:action.type,routine_id:routine.id,routine_name:nameOf(routine),exercise_index:idx,exercise_id:exercise.id,from,to});
       normalizedActions.push(clone(action));
@@ -193,10 +201,11 @@ export function applyActions(inputState, actions, names={}) {
 }
 
 export class PersonalGymBridge {
-  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({}), loadCatalogue, backup, localDirectory}){
+  constructor({client, writes=false, now=Date.now, ttl=600000, loadNames=async()=>({}), loadCatalogue, backup, localDirectory,catalogueFile,fetchCatalogue}){
     this.client=client; this.loadNames=loadNames; this.loadCatalogue=loadCatalogue; this.writes=writes;
     this.features=new FeatureService(this,localDirectory);
     this.writer=new GuardedWrites({client,writes,backup,now,ttl});
+    this.catalogueRefresh=new CatalogueRefresh(catalogueFile,this.writer,fetchCatalogue);
   }
   async catalogue(){return this.loadCatalogue ? await this.loadCatalogue() : {names:await this.loadNames(),exercises:{}};}
   async getStatus(){
@@ -208,23 +217,28 @@ export class PersonalGymBridge {
     if(typeof query!=='string'||!query.trim()||query.length>100)throw new PlanError('query 必须是 1-100 字的动作名称或 ID');
     boundedInt(limit,1,30,'limit');
     const names={...(await this.catalogue()).names}; const snap=await this.client.getData();
-    for(const e of snap.state?.customEx||[])if(typeof e.id==='string'&&typeof e.n==='string')names[e.id]=e.n;
+    const customIds=new Set();
+    for(const e of snap.state?.customEx||[])if(typeof e.id==='string'&&typeof e.n==='string'){names[e.id]=e.n;customIds.add(e.id);}
     if(!Object.keys(names).length)throw new PlanError('动作目录尚未加载；请运行 node src/catalogue.mjs');
     const q=query.trim().toLocaleLowerCase();
-    const results=Object.entries(names).filter(([id,name])=>id.toLowerCase()===q||String(name).toLocaleLowerCase().includes(q)).slice(0,limit).map(([exercise_id,exercise_name])=>({exercise_id,exercise_name}));
+    const results=Object.entries(names).filter(([id,name])=>id.toLowerCase()===q||String(name).toLocaleLowerCase().includes(q)).slice(0,limit).map(([exercise_id,exercise_name])=>({exercise_id,exercise_name,source:customIds.has(exercise_id)?'custom':'official'}));
     return {query:query.trim(),count:results.length,results};
   }
   async getSummary(){const snap=await this.client.getData();return {...publicSummary(snap.state),server_revision:snap.rev};}
   async getRecent({limit=10}={}){const snap=await this.client.getData();return publicRecent(snap.state,limit,(await this.catalogue()).names);}
   async preview({actions}){
-    const snap=await this.client.getData();const planned=applyActions(snap.state,actions,(await this.catalogue()).names);
+    return this.previewFromSnapshot(await this.client.getData(),{actions},await this.catalogue());
+  }
+  previewFromSnapshot(snap,{actions},catalogue){
+    const planned=applyActions(snap.state,actions,catalogue.names);
     return this.writer.prepare('plan',snap,planned.state,{changes:planned.changes},{changes:planned.changes});
   }
   async apply(input){return this.writer.commit('plan',input);}
-  async previewWorkoutLog({workouts}){
+  async previewWorkoutLog({workouts},{applySessionMetadata}={}){
     if(!Array.isArray(workouts)||workouts.length<1||workouts.length>10)throw new PlanError('workouts 必须包含 1-10 次训练');
     const snap=await this.client.getData();const catalogue=await this.catalogue();
     const records=workouts.map(w=>normalizeWorkoutInput(w,{state:snap.state,catalogue,names:catalogue.names}));
+    if(applySessionMetadata)for(const record of records)applySessionMetadata(record,snap.state);
     const signatures=new Set((snap.state.workouts||[]).map(workoutSignature));
     const batch=new Set();
     for(const w of records){const key=workoutSignature(w);if(signatures.has(key))throw new PlanError('疑似重复：相同的训练历史已存在，整批未写入','duplicate');if(batch.has(key))throw new PlanError('批量导入中存在重复训练，整批未写入','duplicate');batch.add(key);}

@@ -1,6 +1,13 @@
 # Changelog
 
-## v0.4.1 — development, unreleased
+## v0.5.0 — development
+
+- Pin the v1.4.5 exercise catalogue and validate the data wrapper, Chinese names and split muscle model. Catalogue refresh requires an approved, digest-bound proposal and backs up the previous copy.
+- Resolve the local day's plan and persist resumable, timed training drafts with immutable opening targets. Finish reports separate work completion, extra sets, elapsed and active time.
+- Sync explicitly selected native weigh-ins and circumferences. Retain private feedback and add session/occurrence records, evidence-based suggestions and five SVG trends.
+- Preserve 37 existing tools and guarded writes. Verify the three pinned upstream versions, including the v1.4.5 MCP comparison and official web store readback. See [v0.5.0 guide](docs/v0.5.0.md).
+
+## v0.4.1
 
 - Pin text catalogue import to official openGym v1.4.2 commit `e9a303877d02e4237b183f96a9a6603990e8fafb`, verify all three source file digests, merge the independent muscle map and retain explicit zero weights and Chinese names. Fetch/schema/integrity failures preserve the existing catalogue; legacy readers remain compatible.
 - Add `effective_sets`, muscle-weight source accounting and catalogue provenance to weekly analysis without removing legacy credit/volume/trend fields. Explicit valid historical snapshot weights win; missing weights use current official/custom metadata and documented defaults. Never rewrite history for a statistics refresh.

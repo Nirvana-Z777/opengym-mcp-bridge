@@ -156,7 +156,7 @@ function storedNumber(value) {
   return value;
 }
 export function modeOf(row, entry = {}) {
-  return row.mode || entry.target?.mode || (row.sec != null || row.seconds != null || row.durationSec != null ? 'time' : row.min != null || row.speed != null ? 'cardio' : 'reps');
+  return row.mode || entry.target?.mode || (row.m != null && row.r == null ? 'distance' : row.sec != null || row.seconds != null || row.durationSec != null ? 'time' : row.min != null || row.speed != null ? 'cardio' : 'reps');
 }
 function rowVolume(row) {
   if (hasSides(row)) return ['L', 'R'].reduce((sum, key) => sum + rowVolume(row.sides[key]), 0);
@@ -176,7 +176,7 @@ export function workoutVolume(workout, state = {}, catalogue = {}) {
   for (const e of workout.entries || []) {
     assertUnambiguousWeightLayout(e);
     for (const s of e.sets || []) {
-      if (!['warmup','work'].includes(phaseOf(s)) || !['reps','time','cardio'].includes(modeOf(s,e))) throw new PlanError('Unsupported stored set mode/phase', 'unsupported');
+      if (!['warmup','work'].includes(phaseOf(s)) || !['reps','time','cardio','distance'].includes(modeOf(s,e))) throw new PlanError('Unsupported stored set mode/phase', 'unsupported');
       if (modeOf(s,e)!=='reps' && Number(s.r)>0) throw new PlanError('计时/有氧旧组还包含次数，无法安全重算容量，请在原 App 核对', 'unsupported');
     }
   }
@@ -193,7 +193,7 @@ export function beats(load, previous, assistance) {
 export function bestLoad(entry, state = {}, catalogue = {}) {
   const work = (entry.sets || []).filter(row => phaseOf(row) !== 'warmup');
   const reps = work.filter(row => modeOf(row, entry) === 'reps' && (row.done === true || hasSides(row)));
-  const rows = reps.length ? reps : work;
+  const rows = reps.length ? reps : work.filter(row=>modeOf(row,entry)!=='distance');
   const assistance = assisted(state, catalogue, entry);
   const weights = rows.flatMap(row => hasSides(row) ? [row.sides.L, row.sides.R] : [row])
     .filter(row => row.done === true).map(row => storedNumber(row.w)).filter(w => !assistance || w > 0);
@@ -201,14 +201,25 @@ export function bestLoad(entry, state = {}, catalogue = {}) {
   if (modeOf({},entry)==='reps' && !entry.sets?.some(row => phaseOf(row) === 'warmup') && work.every(row => modeOf(row, entry) === 'reps')) return storedNumber(entry.topW);
   return 0;
 }
-export function publicSet(row, entry = {}) {
+export function publicSet(row, entry = {}, state = {}) {
   const mode=modeOf(row,entry),phase=phaseOf(row);
   const out = { mode: typeof mode==='string'?mode:null, phase: typeof phase==='string'?phase:null, done: row.done === true };
   for (const [native, external] of Object.entries({ w: 'weight', r: 'reps', sec: 'seconds', min: 'minutes', speed: 'speed', rir: 'rir', rpe: 'rpe', side: 'side', type: 'type', failure: 'failure' })) {
     if (typeof row[native] === 'number' || typeof row[native] === 'boolean' || (['side', 'type'].includes(native) && typeof row[native] === 'string')) out[external] = row[native];
   }
   if (out.seconds === undefined) for (const alias of ['seconds', 'durationSec']) if (typeof row[alias] === 'number') out.seconds = row[alias];
-  if (hasSides(row)) out.sides = { L: { ...publicSet(row.sides.L), phase: out.phase }, R: { ...publicSet(row.sides.R), phase: out.phase } };
+  if (Number.isFinite(row.m)&&row.m>=0) out.distance_m=row.m;
+  if (typeof row.tempo==='string'&&/^\d{1,2}-\d{1,2}-(?:\d{1,2}|X)-\d{1,2}$/i.test(row.tempo)) out.tempo=row.tempo;
+  if (Array.isArray(row.bands)&&row.bands.length<=50&&row.bands.every(id=>typeof id==='string'&&id.length<=100)) out.band_ids=[...row.bands];
+  if(out.band_ids)out.bands=out.band_ids.map(id=>{
+    const band=(Array.isArray(state.bands)?state.bands:[]).find(item=>item?.id===id);
+    return {id,name:typeof band?.name==='string'?band.name.slice(0,24):null,
+      level:typeof band?.level==='string'?band.level.slice(0,16):null,
+      catalogue_resistance_kg:Number.isFinite(band?.kg)?band.kg:null};
+  });
+  if (hasSides(row)) out.sides = {
+    L: { ...publicSet(row.sides.L, {}, state), phase: out.phase }, R: { ...publicSet(row.sides.R, {}, state), phase: out.phase }
+  };
   if (Array.isArray(row.drops)) out.drops = row.drops.map(d => Object.fromEntries([['weight',d?.w],['reps',d?.r]].filter(([,v])=>typeof v==='number')));
   if (Array.isArray(row.clusters)) out.clusters = row.clusters.map(c => Object.fromEntries([['reps',c?.r],['rest_seconds',c?.restSec]].filter(([,v])=>typeof v==='number')));
   return out;
@@ -223,16 +234,19 @@ export function publicRoutineExtras(config){
     if(typeof config[key]!=='number'||!Number.isFinite(config[key])||config[key]<0)throw new PlanError('Unsupported stored rest configuration', 'unsupported');
     out[key]=config[key];
   }
-  if(Object.hasOwn(config,'warmupRestOff')){if(typeof config.warmupRestOff!=='boolean')throw new PlanError('Unsupported stored warmupRestOff', 'unsupported');out.warmupRestOff=config.warmupRestOff;}
+  for(const key of ['warmupRestOff','restOff','sideRestOff'])if(Object.hasOwn(config,key)){
+    if(typeof config[key]!=='boolean')throw new PlanError('Unsupported stored rest flag', 'unsupported');
+    out[key]=config[key];
+  }
   return out;
 }
 export function publicEntry(entry, index, state, catalogue) {
   if (typeof entry.id !== 'string') throw new PlanError('Unsupported exercise identity', 'unsupported');
   const target = Object.fromEntries(Object.entries(entry.target || {}).filter(([key, value]) =>
-    ['id', 'mode', 'side', 'sets', 'reps', 'sec', 'min', 'speed', 'weight', 'dbLoad', 'bodyweight', 'restSec'].includes(key)
+    ['id', 'mode', 'side', 'sets', 'reps', 'sec', 'm', 'min', 'speed', 'weight', 'dbLoad', 'bodyweight', 'restSec', 'restOff','sideRestOff'].includes(key)
     && ['string', 'number', 'boolean'].includes(typeof value)));
   Object.assign(target,publicRoutineExtras(entry.target||{}));
   return { exercise_index: index, exercise_id: entry.id, exercise_name: exerciseName(state, catalogue, entry), target,
-    weight_basis: basisOf(entry), note: typeof entry.note === 'string' ? entry.note : null,
-    sets: (entry.sets || []).map(row => publicSet(row, entry)) };
+    ...(typeof entry.bridgeOccurrenceId==='string'?{occurrence_id:entry.bridgeOccurrenceId}:{}), weight_basis: basisOf(entry), note: typeof entry.note === 'string' ? entry.note : null,
+    sets: (entry.sets || []).map(row => publicSet(row, entry, state)) };
 }

@@ -68,7 +68,9 @@ const TOOLS = [
             exercise:{type:'object',required:['exercise_id','sets','reps'],additionalProperties:false,properties:{exercise_id:{type:'string',minLength:1,maxLength:64},sets:{type:'integer',minimum:1,maximum:12},reps:{type:'integer',minimum:1,maximum:100},weight:{type:'number',minimum:0,maximum:1000}}},
             sets:{type:'integer',minimum:1,maximum:12},
             reps:{type:'integer',minimum:1,maximum:100},
-            weight:{type:'number',minimum:0,maximum:1000}
+            weight:{type:'number',minimum:0,maximum:1000},
+            seconds:{type:'integer',minimum:1,maximum:86400},rest_sec:{type:'integer',minimum:0,maximum:3600},
+            warmup_rest_sec:{type:'integer',minimum:0,maximum:3600},side_rest_sec:{type:'integer',minimum:0,maximum:3600},warmup_rest_off:{type:'boolean'},rest_off:{type:'boolean'},side_rest_off:{type:'boolean'}
           },additionalProperties:false
         }}
       }
@@ -94,10 +96,19 @@ const TOOLS = [
   }
 ];
 
-TOOLS.push(...EXTRA_TOOLS,...FEATURE_TOOLS);
+const catalogueTools = [
+  {name:'get_catalogue_status',description:'Read the local official text catalogue and pinned update status.',inputSchema:emptyObj},
+  {name:'preview_catalogue_refresh',description:'Preview the validated local official catalogue update. No local or upstream write.',inputSchema:emptyObj},
+  {name:'apply_catalogue_refresh',description:'Apply an explicitly approved local catalogue proposal. Backup and atomic replacement.',inputSchema:{type:'object',required:['proposal_id','confirmation'],additionalProperties:false,properties:{proposal_id:{type:'string'},confirmation:{enum:['我确认写入']}}}}
+];
+TOOLS.push(...EXTRA_TOOLS,...FEATURE_TOOLS,...catalogueTools);
+WRITE_TOOLS.add('apply_catalogue_refresh');
 for(const name of FEATURE_WRITE_TOOLS)WRITE_TOOLS.add(name);
 
 const map = (bridge) => ({
+  get_catalogue_status:()=>bridge.catalogueRefresh.status(),
+  preview_catalogue_refresh:()=>bridge.catalogueRefresh.preview(),
+  apply_catalogue_refresh:args=>bridge.catalogueRefresh.apply(args),
   ...Object.fromEntries(FEATURE_TOOLS.map(t=>[t.name,args=>bridge.features.call(t.name,args)])),
   search: ({query}) => {
     if(typeof query !== 'string' || !query.trim() || query.length>200) throw new Error('query 必须是 1-200 字的文字');
@@ -213,7 +224,7 @@ export function createHttpServer(bridge,accessToken){
 export async function main(){
   const cfg=configFromEnv();
   const client=new OpenGymClient(cfg);
-  const bridge=new PersonalGymBridge({client,writes:cfg.writes,ttl:cfg.proposalTtlMs,loadCatalogue:()=>loadExerciseCatalogue(cfg.catalogueFile),localDirectory:path.join(path.dirname(cfg.catalogueFile),'local'),backup:new FileBackupStore({directory:cfg.backupDirectory,keep:cfg.backupKeep})});
+  const bridge=new PersonalGymBridge({client,writes:cfg.writes,ttl:cfg.proposalTtlMs,loadCatalogue:()=>loadExerciseCatalogue(cfg.catalogueFile),catalogueFile:cfg.catalogueFile,localDirectory:path.join(path.dirname(cfg.catalogueFile),'local'),backup:new FileBackupStore({directory:cfg.backupDirectory,keep:cfg.backupKeep})});
   if(cfg.transport==='stdio'){
     const rl=createInterface({input:process.stdin,crlfDelay:Infinity});
     for await(const line of rl){

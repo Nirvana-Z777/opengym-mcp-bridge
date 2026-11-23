@@ -51,7 +51,7 @@ jobs:
           import { readFileSync } from 'node:fs';
           const output = readFileSync('test-results.tap', 'utf8');
           const count = output.match(/^# tests (\d+)$/m);
-          if (!count || Number(count[1]) < 155) throw new Error('All v0.4.0 regression tests must remain present');
+          if (!count || Number(count[1]) < 209) throw new Error('All v0.4.1 regression tests must remain present');
           console.log(`Executed ${count[1]} tests`);
           JS
 
@@ -63,6 +63,8 @@ jobs:
       fail-fast: false
       matrix:
         official:
+          - version: '1.4.5'
+            commit: 2d70e026effc6602f513555166a97443520f0572
           - version: '1.4.2'
             commit: e9a303877d02e4237b183f96a9a6603990e8fafb
           - version: '1.4.1'
@@ -90,6 +92,10 @@ jobs:
         run: npm ci --omit=optional --ignore-scripts
       - name: Install pinned official frontend dependencies
         working-directory: upstream-compatibility/frontend
+        run: npm ci --ignore-scripts
+      - name: Install official MCP dependencies for v1.4.5 parity checks
+        if: matrix.official.version == '1.4.5'
+        working-directory: upstream-compatibility/mcp
         run: npm ci --ignore-scripts
       - name: Run isolated official API and frontend sync acceptance
         run: node scripts/acceptance-official.mjs upstream-compatibility --official-version=${{ matrix.official.version }}
@@ -169,8 +175,8 @@ jobs:
           const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
           assert.equal(replies.length, 2);
           assert.equal(replies[0].result.serverInfo.version, version);
-          assert.equal(replies[1].result.tools.length, 37);
-          console.log(`Verified actual container startup; MCP version: ${version}; 37 tools; network disabled`);
+          assert.equal(replies[1].result.tools.length, 52);
+          console.log(`Verified actual container startup; MCP version: ${version}; 52 tools; network disabled`);
           JS
 
   publish:

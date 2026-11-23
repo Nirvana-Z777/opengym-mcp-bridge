@@ -14,21 +14,22 @@ import { OpenGymClient,writeCredential } from '../src/openGym.mjs';
 import { extractCatalogueArray,buildCatalogue,importCatalogue } from '../src/catalogue.mjs';
 import {weightsForEntry} from '../src/muscle-weights.mjs';
 
-const OFFICIAL_PINS={'1.4.2':'e9a303877d02e4237b183f96a9a6603990e8fafb','1.4.1':'464355ef43d4c8f8a4e0bb6db9c2af7f240593b5'};
+const OFFICIAL_PINS={'1.4.5':'2d70e026effc6602f513555166a97443520f0572','1.4.2':'e9a303877d02e4237b183f96a9a6603990e8fafb','1.4.1':'464355ef43d4c8f8a4e0bb6db9c2af7f240593b5'};
 const version=process.argv.find(a=>a.startsWith('--official-version='))?.split('=')[1]||'1.4.2';
 const PIN=OFFICIAL_PINS[version];assert(PIN,'Only explicitly pinned official versions are accepted');
 const upstream = path.resolve(process.argv[2] || '');
-assert(process.argv[2], 'Usage: node scripts/acceptance-official.mjs /external/openGym [--official-version=1.4.2|1.4.1] [--keep]');
+assert(process.argv[2], 'Usage: node scripts/acceptance-official.mjs /external/openGym [--official-version=1.4.5|1.4.2|1.4.1] [--keep]');
 assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: upstream, encoding: 'utf8' }).trim(), PIN);
 for(const folder of ['api','frontend'])assert.equal(JSON.parse(await fs.readFile(path.join(upstream,folder,'package.json'),'utf8')).version,version);
 assert.equal(execFileSync('git', ['diff', '--name-only', 'HEAD'], { cwd: upstream, encoding: 'utf8' }).trim(), '', 'Official tracked files must be unmodified');
 const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'opengym-official-acceptance-'));
+const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'opengym-official-acceptance-'));
 await fs.chmod(dir, 0o700);
 const bridgeVersion=JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).version;
 const report = { upstream: { version, commit: PIN }, bridge_commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), bridge_version:bridgeVersion,node: process.version, checks: [], requests: [] };
 const calledTools=new Set();
 // This run creates its own signing seed before boot; never read an existing server secret.
+const syntheticPassword='Synthetic-only-acceptance-2026!';
 const signingSeed=randomBytes(32).toString('hex');
 await fs.mkdir(path.join(dir,'official'),{mode:0o700});
 await fs.writeFile(path.join(dir,'official','secret'),signingSeed,{mode:0o600});
@@ -90,8 +91,18 @@ async function nativeEdit(fn) {
 }
 let stampChange, mergeStates, entryRoutineId, workoutVolume,syntheticUser;
 try {
-  const api = spawn(process.execPath, ['server.js'], { cwd: path.join(upstream, 'api'), env: { ...env, PORT: '0', DATA_DIR: path.join(dir, 'official'), PASSWORD_LOGIN: '1', FIRST_USER_ADMIN: '0', ORIGIN: 'http://localhost:4173', RP_ID: 'localhost' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const loopback = path.join(dir,'bind-loopback.mjs');
+  await fs.writeFile(loopback, `import { Server } from 'node:net';
+const original=Server.prototype.listen;
+Server.prototype.listen=function(port,...args){
+  if(typeof port==='string' && port.startsWith(process.env.DATA_DIR+'/'))return original.call(this,port,...args);
+  if(Number(port)!==0)throw new Error('Acceptance process may only bind an ephemeral localhost port');
+  return original.call(this,port,'127.0.0.1',...args);
+};
+`);
+  const api = spawn(process.execPath, ['--import',loopback,'server.js'], { cwd: path.join(upstream, 'api'), env: { ...env, PORT: '0', DATA_DIR: path.join(dir, 'official'), ADMIN_SOCKET_DIR: path.join(dir,'official','admin'), PASSWORD_LOGIN: '1', FIRST_USER_ADMIN: '0', ORIGIN: 'http://localhost:4173', RP_ID: 'localhost' }, stdio: ['ignore', 'pipe', 'pipe'] });
   children.add(api);
+  api.stderr.on('data', chunk => process.stderr.write(chunk));
   apiUrl = await new Promise((resolve, reject) => {
     let log = ''; const timer = setTimeout(() => reject(new Error('Official API boot timeout')), 10000);
     api.stdout.on('data', d => { log += d; const m = /gym-api on :(\d+)/.exec(log); if (m) { clearTimeout(timer); resolve('http://127.0.0.1:' + m[1]); } });
@@ -119,7 +130,7 @@ try {
   const muscleMap=JSON.parse(await fs.readFile(path.join(upstream,'frontend/src/lib/exercise-muscle-map.json'),'utf8'));
   const translations=JSON.parse(await fs.readFile(path.join(upstream,'catalogue/i18n/zh.json'),'utf8'));
   let catalogue;
-  if(version==='1.4.2'){
+  if(version==='1.4.5'){
     await importCatalogue(path.join(dir,'catalogue.json'),{fetchImpl:async url=>{
       const root=`https://raw.githubusercontent.com/DuarteSantos8/openGym/${PIN}/`;
       assert(url.startsWith(root));const file=url.slice(root.length);
@@ -139,13 +150,13 @@ try {
     report.catalogue={count:catalogue.count,translated:catalogue.translated,source_version:catalogue.source_version,source_commit:catalogue.source_commit,weight_parity_compared:catalogue.count};
   });
   await check('isolated account registration and official one-time pairing', async () => {
-    syntheticUser=(await raw('POST', '/api/register/password', { name: 'Bridge Acceptance Synthetic', password: 'Synthetic-only-acceptance-2026!' })).user;
+    syntheticUser=(await raw('POST', '/api/register/password', { name: 'Bridge Acceptance Synthetic', password: syntheticPassword })).user;
     const paired = new OpenGymClient({ baseUrl: `http://127.0.0.1:${proxy.address().port}`, tokenFile: path.join(dir, 'paired.json') });
-    const code = (await raw('POST', '/api/pair/create')).code; await paired.pair(code);
+    const code = (await raw('POST', '/api/pair/create', version==='1.4.5'?{current:syntheticPassword}:undefined)).code; await paired.pair(code);
     await raw('POST', '/api/pair/redeem', { code }, 400);
     assert.equal((await snapshot()).state, null);
     await raw('PUT', '/api/data', { state: { unit: 'kg', routines: [], week: {}, dayPlan: {}, workouts: [], customEx: [], bodyweight: [], exWeights: {}, syntheticExtension: { preserve: true } }, baseRev: 0 });
-    await startMcp(); assert.equal((await rpc('tools/list')).tools.length, 37);
+    await startMcp(); assert.equal((await rpc('tools/list')).tools.length, 52);
     assert.equal((await call('get_status')).connected, true);
   });
   await check('paired bearer renewal, stable identity, cookie replay restrictions and rejection of invalid tokens',async()=>{
@@ -374,10 +385,156 @@ try {
     const committed=await call('log_workout',approval(log));assert.equal(committed.verified,true);
     const edit=await call('preview_workout_edit',{workout_id:committed.records[0].workout_id,actions:[{type:'set_note',note:'Synthetic validated original tool'}]});
     assert.equal((await call('apply_workout_edit',approval(edit))).verified,true);
-    const registry=(await rpc('tools/list')).tools;assert.equal(registry.length,37);
-    assert.deepEqual([...calledTools].sort(),registry.map(t=>t.name).sort());
+    const registry=(await rpc('tools/list')).tools;assert.equal(registry.length,52);
+    assert.equal(calledTools.size,37);assert([...calledTools].every(name=>registry.some(t=>t.name===name)));
     report.tools={registered:registry.length,successfully_called:calledTools.size,names:[...calledTools].sort()};
   });
+  if(version==='1.4.5'){
+    const {withProfile}=await import(pathToFileURL(path.join(upstream,'mcp/src/state.js')));
+    const {getWeekPlan,previewSession}=await import(pathToFileURL(path.join(upstream,'mcp/src/tools.js')));
+    const {normalizeMeasurementsState}=await import(pathToFileURL(path.join(upstream,'frontend/src/lib/measurements.js')));
+    const {settleAll}=await import(pathToFileURL(path.join(upstream,'frontend/src/lib/weigh-ins.js')));
+    const today=new Intl.DateTimeFormat('en-CA',{timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const time_zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const suiteId='synthetic-v050-planned';
+    let draft, synced;
+    await check('same-date official MCP schedule and start targets agree with Bridge on weekly, combined, override, pin and rest',async()=>{
+      await nativeEdit(s=>{
+        s.routines.push({id:suiteId,name:'Synthetic planned flow',ex:[
+          {id:bench,sets:2,reps:5,weight:8,prog:'off',restSec:80,sideRestSec:15},
+          {id:squat,sets:1,mode:'time',sec:25,weight:0,prog:'off',warmupRestSec:22}
+        ]});
+        s.dayPlan={};s.week={};s.queue=null;s.progDefault='off';
+      });
+      const weekday=new Date(today+'T12:00:00').getDay();
+      for(const scenario of ['weekday','combined','override','pin','rest']){
+        await nativeEdit(s=>{
+          s.week={[weekday]:scenario==='combined'?[suiteId,plans[1].id]:[suiteId]};
+          s.dayPlan=scenario==='rest'?{[today]:'rest'}:scenario==='override'||scenario==='pin'?{[today]:suiteId}:{};
+          s.queue=scenario==='pin'?{ids:[suiteId],startsOn:today}:null;
+        });
+        const state=(await snapshot()).state;
+        const official=withProfile({state:structuredClone(state),user:{name:'Synthetic'}},()=>getWeekPlan.handler());
+        const own=await call('get_today_plan',{time_zone,date:today});
+        assert.equal(official.today,today);
+        assert.deepEqual(own.routine_ids,official.today_routine_ids);
+        assert.equal(own.source,official.days[0].planned_by);
+      }
+      await nativeEdit(s=>{s.dayPlan={[today]:suiteId};s.queue=null;});
+      const state=(await snapshot()).state;
+      const expected=withProfile({state:structuredClone(state),user:{name:'Synthetic'}},()=>previewSession.handler({date:today,routine_id:suiteId}));
+      const preview=await call('preview_planned_session',{time_zone,date:today});
+      assert.deepEqual(preview.opening_targets.map(t=>[t.exercise_id,t.opening.sets,t.opening.weight??0,t.opening.reps??0,t.opening.sec??0]),
+        expected.exercises.map(e=>[e.id,e.opening_sets.length,e.opening_sets[0].w,e.opening_sets[0].r,e.opening_sets[0].sec]));
+    });
+
+    await check('today to clocked draft, pause, restart, measured rows, approved save, native reread, trends and suggestion',async()=>{
+      const before=puts();
+      draft=await call('start_planned_workout',{time_zone});
+      assert.equal(draft.clock.status,'running');
+      const edit=(name,extra)=>call(name,{draft_id:draft.draft_id,expected_revision:draft.revision,...extra});
+      await call('record_session_feedback',{draft_id:draft.draft_id,questionnaire:{sleep:4,fatigue:1,soreness:1,recovery:4}});
+      draft=await edit('draft_session_clock',{action:'pause'});
+      const old=mcp;old.kill();await once(old,'exit');children.delete(old);
+      await startMcp();
+      assert.deepEqual(await call('get_workout_draft',{draft_id:draft.draft_id}),draft);
+      draft=await edit('draft_session_clock',{action:'resume'});
+      for(let i=0;i<2;i++)draft=await edit('draft_add_set',{exercise_index:0,set:{weight:8,reps:5,rir:3}});
+      draft=await edit('draft_add_set',{exercise_index:1,set:{seconds:23}});
+      await call('record_session_feedback',{draft_id:draft.draft_id,exercise_feedback:{exercise_index:0,discomfort:'none',rir:3}});
+      const feedback=await call('list_session_feedback',{draft_id:draft.draft_id});
+      assert.equal(feedback.total,2);
+      draft=await edit('draft_session_clock',{action:'end'});
+      const p=await call('preview_finish_workout_draft',{draft_id:draft.draft_id});
+      assert.equal(p.completion.completion_rate,1);
+      assert(p.completion.active_seconds<=p.completion.total_seconds);assert.equal(puts(),before);
+      await assert.rejects(()=>call('commit_finished_workout_draft',{proposal_id:p.proposal_id}));
+      synced=await call('commit_finished_workout_draft',approval(p));
+      assert.equal(synced.verified,true);assert.equal(puts(),before+1);
+      const saved=(await snapshot()).state.workouts.find(w=>w.id===synced.records[0].workout_id);
+      assert.equal(saved.entries[1].sets[0].sec,23);assert.equal(saved.entries[1].planned.sec,25);
+      assert.deepEqual(saved.routineIds,[suiteId]);
+      assert.equal((await call('get_training_trend',{from:today,to:today,metric:'exercise',exercise_id:bench})).series[0].points[0].value,8);
+      const suggestion=await call('get_training_suggestion',{routine_id:suiteId,exercise_index:0});
+      assert.equal(suggestion.recommendation?.reps,6);
+      const change=await call('preview_training_suggestion',{routine_id:suiteId,exercise_index:0,suggestion_id:suggestion.suggestion_id});
+      assert(change.proposal_id);assert.equal(puts(),before+1);
+    });
+
+    await check('linear load progression matches official opening rows on a completed straight-set plan',async()=>{
+      await nativeEdit(s=>{
+        s.routines.find(r=>r.id===suiteId).ex[0].prog='linear';
+        s.routines.find(r=>r.id===suiteId).ex[0].inc=2;
+      });
+      const state=(await snapshot()).state;
+      const official=withProfile({state:structuredClone(state),user:{name:'Synthetic'}},()=>previewSession.handler({date:today,routine_id:suiteId}));
+      const own=await call('preview_planned_session',{time_zone,date:today});
+      assert.equal(own.opening_targets[0].source,'progression');
+      assert.equal(own.opening_targets[0].opening.weight,10);
+      assert.equal(own.opening_targets[0].opening.weight,official.exercises[0].opening_sets[0].w);
+    });
+
+    await check('native bodyweight and measurements round-trip and openGym frontend models agree',async()=>{
+      await nativeEdit(s=>{s.bwDaily='avg';});
+      const items=[
+        {kind:'weight',date:today,time:'08:00',value:60,unit:'kg'},
+        {kind:'weight',date:today,time:'12:00',value:62,unit:'kg'},
+        {kind:'circumference',date:today,field:'waist',value:30,unit:'in'}
+      ];
+      const before=puts();
+      const p=await call('preview_body_sync',{items});
+      assert.equal(p.changes[1].daily_weight,61);assert.equal(puts(),before);
+      const result=await call('apply_body_sync',approval(p));
+      assert.equal(result.verified,true);assert.equal(puts(),before+1);
+      const device=structuredClone((await snapshot()).state);
+      settleAll(device);normalizeMeasurementsState(device);
+      const daily=device.bodyweight.find(e=>e.d===today);
+      assert.equal(daily.ins.length,2);assert.equal(daily.w,61);
+      assert.equal(device.measurements.find(e=>e.d===today).waist,76.2);
+      const read=await call('get_native_body_data',{from:today,to:today});
+      assert.equal(read.weights[0].daily_weight,61);
+      assert.equal((await call('get_training_trend',{metric:'body_weight',from:today,to:today})).series[0].points[0].value,61);
+      assert.equal((await call('preview_body_sync',{items})).proposal_id,null);
+    });
+
+    await check('official web store pulls the new completed workout, daily weigh-ins and circumference over HTTP',async()=>{
+      const probeName='bridge-v050-frontend.test.jsx';
+      const destination=path.join(upstream,'frontend',probeName);
+      await fs.copyFile(path.join(root,'scripts/acceptance-frontend.test.jsx'),destination,fs.constants.COPYFILE_EXCL);
+      frontendProbe=destination;
+      const child=spawn(process.execPath,['node_modules/vitest/vitest.mjs','run',probeName],{
+        cwd:path.join(upstream,'frontend'),
+        env:{...env,ACCEPTANCE_API:apiUrl,ACCEPTANCE_COOKIE:cookie,ACCEPTANCE_WORKOUT_ID:synced.records[0].workout_id},
+        stdio:['ignore','pipe','pipe']
+      });
+      children.add(child);
+      let logs='';
+      child.stdout.on('data',chunk=>{logs+=chunk;});child.stderr.on('data',chunk=>{logs+=chunk;});
+      const [code]=await once(child,'exit');
+      assert.equal(code,0,logs);
+      await fs.unlink(destination);frontendProbe=null;
+    });
+
+    await check('v1.4.5 distance, resistance bands, per-set tempo, and circuit results survive a note edit',async()=>{
+      const special={id:'synthetic-special-v050',d:'2000-01-01',name:'Synthetic circuit',vol:0,
+        entries:[{id:squat,sets:[{mode:'distance',m:15,w:3,done:true,bands:['synthetic-band'],tempo:'3-1-1-0'}]}],
+        circuits:[{mode:'amrap',ids:[squat],rounds:2,extra:3,roundTimes:[18,20],sec:44}]};
+      await nativeEdit(s=>{s.workouts.push(special);});
+      const before=puts(),get=()=>call('get_workout',{workout_id:special.id});
+      const read=await get();
+      assert.equal(read.exercises[0].sets[0].distance_m,15);
+      assert.equal(read.exercises[0].sets[0].tempo,'3-1-1-0');
+      assert.deepEqual(read.exercises[0].sets[0].band_ids,['synthetic-band']);
+      assert.equal(read.circuit_results[0].rounds,2);
+      const action=actions=>call('preview_workout_edit',{workout_id:special.id,actions});
+      await assert.rejects(()=>action([{type:'update_set',exercise_index:0,set_index:0,changes:{weight:5}}]),error=>error.code==='unsupported');
+      assert.equal(puts(),before);
+      const p=await action([{type:'set_note',note:'Synthetic updated note'}]);
+      assert.equal((await call('apply_workout_edit',approval(p))).verified,true);
+      const stored=(await snapshot()).state.workouts.find(w=>w.id===special.id);
+      assert.deepEqual(stored.entries,special.entries);assert.deepEqual(stored.circuits,special.circuits);
+    });
+  }
   report.passed = true;
   report.finished_at = new Date().toISOString();
   await fs.writeFile(output, JSON.stringify(report, null, 2) + '\n');

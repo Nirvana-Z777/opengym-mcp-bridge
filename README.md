@@ -12,13 +12,7 @@ A community-maintained, self-hosted MCP bridge for [openGym](https://github.com/
 
 This project is experimental. Back up your openGym data and inspect every write preview before confirming it.
 
-The current published release is **v0.4.0**. This development branch prepares **v0.4.1**; no 0.4.1 image is published by a PR. See [CHANGELOG](CHANGELOG.md), [tool inputs/outputs and examples](docs/tools.md), [openGym compatibility and limits](docs/compatibility.md), [backup, recovery, upgrade and rollback procedures](docs/operations.md), and the [development security review](docs/security-review.md).
-
-## v0.4.1 compatibility maintenance (unreleased)
-
-Targets official openGym **v1.4.2** (`e9a303877d02e4237b183f96a9a6603990e8fafb`) and retains v1.4.1 compatibility CI. The optional text importer now verifies three immutable source files (including the independent muscle map), keeps Chinese names and explicit zero weights, and refuses partial/invalid downloads before replacing a catalogue. No official implementation or dataset is bundled.
-
-`get_weekly_training_summary` adds per-muscle `effective_sets` and source accounting, keeping existing primary/secondary credits, sets, volume and trends. Valid explicit historical weights remain authoritative; entries without weights use the current catalogue. No training history is rewritten. `get_plan` and saved targets expose optional `subs`, `warmupRestSec`, `warmupRestOff` and `sideRestSec`; unrelated new state fields, including `barDefaults` and `dayPhotos`, stay intact. See [v0.4.1 semantics and actual test evidence](docs/v0.4.1.md). All 37 tool names and write guards remain in place.
+The current published release is **v0.4.1**. This branch develops **v0.5.0** against official openGym v1.4.5 while retaining the v1.4.1 and v1.4.2 checks. See the [v0.5.0 feature and acceptance guide](docs/v0.5.0.md), [previous v0.4.1 baseline](docs/v0.4.1.md) and [operations guide](docs/operations.md).
 
 ## v0.4.0
 
@@ -75,7 +69,7 @@ npm test
 npm start
 ```
 
-All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Regression tests use mocked clients or temporary local files. The official compatibility matrix starts unmodified pinned v1.4.1 and v1.4.2 servers with new disposable accounts, and tests actual MCP processes and official frontend sync modules over local HTTP. It verifies all 37 tools, renewal, conflicts, lost responses and new configuration preservation; it never reads production credentials or history. CI requires at least all 155 baseline tests. MCP initialization reports the development version from `package.json`.
+All test identities, pairing codes, dates, body weights and per-set values are deliberately synthetic. Regression tests use mocked clients or temporary local files. The official compatibility matrix starts pinned v1.4.1, v1.4.2 and v1.4.5 servers with new disposable accounts, and tests actual MCP processes and official frontend sync modules over local HTTP. It verifies the 37 original tools, renewal, conflicts, lost responses and newer feature flows; it never reads production credentials or history. CI requires at least all 209 v0.4.1 baseline tests. MCP initialization reports the development version from `package.json`.
 
 Pull requests also audit Docker context exclusion with synthetic canaries, build linux/amd64 and smoke-test MCP initialization with networking disabled. They do not receive package-write permission or publish images. Production upgrades remain a separate owner-approved operation.
 

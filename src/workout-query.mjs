@@ -15,8 +15,24 @@ function summary(w) {
   return { workout_id: workoutKey(w), editable: typeof w.id === 'string' && !!w.id, date: typeof w.d==='string'?w.d:null, name: typeof w.name==='string'?w.name:null,
     exercise_count: (w.entries || []).length, set_count: (w.entries || []).reduce((n, e) => n + (e.sets || []).length, 0) };
 }
+function circuitSummary(c) {
+  const out = {};
+  for (const key of ['rounds','extra','sec']) if (Number.isFinite(c?.[key])) out[key==='sec'?'seconds':key]=c[key];
+  for (const key of ['mode','ended']) if (typeof c?.[key]==='string'&&c[key].length<=40) out[key]=c[key];
+  if (Array.isArray(c?.ids)) out.exercise_ids=c.ids.filter(id=>typeof id==='string').slice(0,30);
+  if (Array.isArray(c?.roundTimes)) out.round_times_seconds=c.roundTimes.filter(Number.isFinite).slice(0,100);
+  return out;
+}
+function sessionReport(session) {
+  if (!Number.isFinite(session?.active_seconds)) return {};
+  const report=session.report;
+  const metrics=['planned_sets','completed_sets','completion_rate','extra_sets','total_seconds','active_seconds'];
+  return {active_seconds:session.active_seconds,completion:Object.fromEntries(metrics.filter(k=>Number.isFinite(report?.[k])).map(k=>[k,report[k]]))};
+}
 export function publicWorkout(w, state, catalogue) {
   return boundedOutput({ ...summary(w), duration_minutes: Number.isFinite(w.start) && Number.isFinite(w.end) && w.end >= w.start ? (w.end - w.start) / 60000 : null,
+    ...(Array.isArray(w.circuits)?{circuit_results:w.circuits.slice(0,30).map(circuitSummary)}:{}),
+    ...sessionReport(w.bridgeSession),
     started_at: Number.isFinite(w.start) && Math.abs(w.start)<=8640000000000000 ? new Date(w.start).toISOString() : null,
     note: typeof w.note === 'string' ? w.note : null, volume: typeof w.vol === 'number' ? w.vol : null,
     routine_id: typeof w.routineId==='string'?w.routineId:null,
